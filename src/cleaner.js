@@ -28,6 +28,9 @@ const SEL = {
 const TEXT = {
   deleteForever: '^\\s*(Delete forever|Xóa vĩnh viễn|Xoá vĩnh viễn)\\s*$',
   saveSettings: '^\\s*(Save Changes|Lưu thay đổi)\\s*$',
+  // dong chu tren dau Thung rac: "Thu trong Thung rac se duoc tu dong xoa sau 30 ngay. Don sach thung rac ngay"
+  emptyTrash: '^\\s*(Empty Trash now|Dọn sạch thùng rác ngay)\\s*$',
+  ok: '^\\s*(OK|Đồng ý)\\s*$', // nut xac nhan trong hop "Xac nhan xoa thu"
 }
 
 class Stopped extends Error {}
@@ -38,7 +41,7 @@ class CleanerError extends Error {}
 // cong cu cu cua muc khac o dang an).
 const PRELUDE = `
   const q = (sel) => [...document.querySelectorAll(sel)].filter((el) => el.getClientRects().length > 0);
-  const byText = (sel, re) => q(sel).filter((el) => new RegExp(re).test(el.textContent));
+  const byText = (sel, re) => q(sel).filter((el) => new RegExp(re, 'iu').test(el.textContent));
 `
 const inPage = {
   hasMain: (SEL) => !!document.querySelector(SEL.main),
@@ -66,7 +69,9 @@ const inPage = {
       box: () => q(SEL.selectAll)[0],
       delete: () => q(SEL.delete)[0],
       forever: () => byText(SEL.toolbarButton, TEXT.deleteForever)[0],
-      ok: () => q(SEL.dialogOk)[0],
+      ok: () => q(SEL.dialogOk)[0] || byText('[role="alertdialog"] button, [role="dialog"] button', TEXT.ok)[0],
+      // phan tu trong cung mang dung dong chu do (phan tu con dung sau phan tu cha)
+      emptyTrash: () => byText('span, a, [role="button"], [role="link"]', TEXT.emptyTrash).pop(),
       save: () => q(SEL.saveSettings)[0] || byText('button', TEXT.saveSettings)[0],
     }[kind]()
     if (!el) return null
@@ -245,6 +250,35 @@ class Cleaner {
     this.log('ok', `${name}: xong, đã xóa ${count} cuộc trò chuyện.`)
   }
 
+  // Don sach Thung rac bang nut "Don sach thung rac ngay" cua Gmail: mot lan bam la
+  // xoa HET, khong phai tung trang 100 thu. Khong thay nut thi moi xoa tung trang.
+  async emptyTrash() {
+    const [name, hash, forever] = TRASH
+    this.onProgress(name, this.deleted)
+    await this.open(`#${hash}`)
+    const empty = async () => (await this.js(inPage.rowCount, SEL)) === 0
+    if (await empty()) {
+      this.log('ok', `${name}: đã trống sẵn.`)
+      return
+    }
+    // "1–100 trong so 1.234" -> 1234 (chi de bao cao)
+    const nums = ((await this.js(inPage.counterText, SEL)) || '').match(/\d[\d.,]*/g) || []
+    const total = nums.length ? parseInt(nums[nums.length - 1].replace(/\D/g, ''), 10) : 0
+    const asked = await this.clickUntil('emptyTrash', () => this.js(inPage.target, SEL, TEXT, 'ok', false), 4, 6)
+    if (asked) {
+      this.log('info', `${name}: đã bấm "Dọn sạch thùng rác ngay", đang chờ Gmail xóa…`)
+      const done = await this.clickUntil('ok', empty, 60, 60)
+      if (done) {
+        this.deleted += total
+        this.onProgress(name, this.deleted)
+        this.log('ok', `${name}: đã dọn sạch${total ? ` ${total} cuộc trò chuyện` : ''}.`)
+        return
+      }
+    }
+    this.log('warn', `${name}: không dùng được nút "Dọn sạch thùng rác ngay", chuyển sang xóa từng trang.`)
+    await this.cleanView(name, hash, 1, forever)
+  }
+
   async run(sections, startPage, emptyTrash) {
     if (!(await this.setPageSize())) {
       if (startPage > 1) {
@@ -259,11 +293,7 @@ class Cleaner {
       this.onProgress(name, this.deleted)
       await this.cleanView(name, hash, startPage, forever)
     }
-    if (emptyTrash) {
-      const [name, hash, forever] = TRASH
-      this.onProgress(name, this.deleted)
-      await this.cleanView(name, hash, 1, forever)
-    }
+    if (emptyTrash) await this.emptyTrash()
   }
 }
 

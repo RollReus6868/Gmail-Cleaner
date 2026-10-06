@@ -10,16 +10,16 @@ const cleaner = require('../src/cleaner')
 const COUNTS = { inbox: 430, 'category/social': 250, 'category/promotions': 120, spam: 30 }
 let wc
 
-async function seed(size = 50, overflow = 'prev', trustedOnly = false) {
+async function seed(size = 50, overflow = 'prev', trustedOnly = false, emptyLink = true) {
   await wc.loadURL(cleaner.GMAIL_URL)
-  await wc.executeJavaScript(`seed(${JSON.stringify(COUNTS)}, ${size}, '${overflow}', ${trustedOnly})`)
+  await wc.executeJavaScript(`seed(${JSON.stringify(COUNTS)}, ${size}, '${overflow}', ${trustedOnly}, ${emptyLink})`)
   wc.reload()
   await new Promise((r) => wc.once('did-finish-load', r))
 }
 
 async function sizes() {
   const d = await wc.executeJavaScript('dump()')
-  return [d.size, Object.fromEntries(Object.entries(d.labels).map(([k, v]) => [k, v.length])), d.labels]
+  return [d.size, Object.fromEntries(Object.entries(d.labels).map(([k, v]) => [k, v.length])), d.labels, d.emptied]
 }
 
 function make(logs, stopAfter = null) {
@@ -38,7 +38,9 @@ async function main() {
     const c = make([])
     await c.login()
     await c.run(['inbox', 'social'], 3, true)
-    const [size, n, labels] = await sizes()
+    const [size, n, labels, emptied] = await sizes()
+    // Thung rac (280 thu, nhieu hon mot trang) phai duoc don bang MOT lan bam "Don sach thung rac ngay"
+    assert.equal(emptied, 280, 'phai dung nut Don sach thung rac ngay')
     assert.equal(size, 100)
     assert.deepEqual(n, { trash: 0, inbox: 200, 'category/social': 200, 'category/promotions': 120, spam: 30 })
     assert.deepEqual(labels.inbox, Array.from({ length: 200 }, (_, i) => `inbox-${i + 1}`), 'phai giu 200 thu dau')
@@ -46,12 +48,23 @@ async function main() {
     console.log(`OK  [${overflow}${trustedOnly ? ', chi chuot that' : ''}] xoa tu trang 3 + don thung rac`)
   }
 
+  // 1b. Thung rac khong co dong "Don sach thung rac ngay": van phai don het bang cach xoa tung trang
+  await seed(100, 'prev', false, false)
+  const logs1b = []
+  let c = make(logs1b)
+  await c.login()
+  await c.run(['inbox'], 1, true)
+  let [, n, , emptied1b] = await sizes()
+  assert.deepEqual([n.inbox, n.trash, emptied1b, c.deleted], [0, 0, 0, 860])
+  assert(logs1b.some(([level, msg]) => level === 'warn' && msg.includes('xóa từng trang')))
+  console.log('OK  khong co nut don sach: xoa tung trang cho den het')
+
   // 2. Xoa tu trang 1, khong don thung rac, co ca Thu rac (xoa vinh vien)
   await seed()
-  let c = make([])
+  c = make([])
   await c.login()
   await c.run(['promotions', 'spam'], 1, false)
-  let [, n] = await sizes()
+  ;[, n] = await sizes()
   assert.deepEqual(n, { trash: 120, inbox: 430, 'category/social': 250, 'category/promotions': 0, spam: 0 })
   console.log('OK  xoa tu trang 1, giu thung rac')
 

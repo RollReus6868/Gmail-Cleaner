@@ -8,14 +8,15 @@
 const KEY = 'mock';
 const load = () => JSON.parse(sessionStorage.getItem(KEY) || 'null');
 const save = s => sessionStorage.setItem(KEY, JSON.stringify(s));
-// seed(counts, size, overflow, trustedOnly): overflow = 'prev' (nhay ve trang truoc) | 'stay';
-// trustedOnly = nut chi nhan chuot THAT (su kien do JS tao ra bi bo qua).
-window.seed = (counts, size = 50, overflow = 'prev', trustedOnly = false) => {
+// seed(counts, size, overflow, trustedOnly, emptyLink): overflow = 'prev' (nhay ve trang truoc) | 'stay';
+// trustedOnly = nut chi nhan chuot THAT (su kien do JS tao ra bi bo qua);
+// emptyLink = Thung rac co dong "Don sach thung rac ngay" (nhu Gmail that).
+window.seed = (counts, size = 50, overflow = 'prev', trustedOnly = false, emptyLink = true) => {
   const labels = { trash: [] };
   for (const [k, n] of Object.entries(counts)) labels[k] = Array.from({ length: n }, (_, i) => k + '-' + (i + 1));
-  save({ size, overflow, trustedOnly, labels });
+  save({ size, overflow, trustedOnly, emptyLink, emptied: 0, labels });
 };
-window.dump = () => { const s = load(); return { size: s.size, labels: s.labels }; };
+window.dump = () => { const s = load(); return { size: s.size, labels: s.labels, emptied: s.emptied }; };
 let checked = false;
 // Giong Gmail: nut thanh cong cu nghe mousedown roi mouseup tren CUNG nut do, khong nghe click.
 function onPress(el, fn) {
@@ -50,7 +51,21 @@ function render() {
   app.innerHTML = `<div gh="tm"><span role="checkbox" aria-checked="false">[ ]</span>` +
     (forever ? '<div role="button">Xóa vĩnh viễn</div>' : '<div act="10" role="button" aria-label="Xóa">X</div>') +
     (rows.length ? `<span class="Dj"><span class="ts">${(from + 1).toLocaleString('vi')}</span>–<span class="ts">${from + rows.length}</span> trong số <span class="ts">${all.length.toLocaleString('vi')}</span></span>` : '') +
-    `</div><div role="main"><table>${rows.map(r => `<tr class="zA"><td>${r}</td></tr>`).join('')}</table></div>`;
+    `</div><div role="main">` +
+    (label === 'trash' && all.length && s.emptyLink
+      ? '<div class="ya">Thư trong Thùng rác sẽ được tự động xóa sau 30 ngày. <span class="x2" role="button">Dọn sạch thùng rác ngay</span></div>' : '') +
+    `<table>${rows.map(r => `<tr class="zA"><td>${r}</td></tr>`).join('')}</table></div>`;
+  const link = app.querySelector('.x2');
+  if (link) onPress(link, () => {   // hoi lai truoc khi xoa, nhu Gmail
+    const dlg = document.createElement('div');
+    dlg.setAttribute('role', 'alertdialog');
+    dlg.innerHTML = 'Xác nhận xóa thư <button name="cancel">Hủy</button><button name="ok">OK</button>';
+    app.append(dlg);
+    onPress(dlg.querySelector('[name=ok]'), () => {
+      dlg.remove();
+      setTimeout(() => { const s2 = load(); s2.emptied += s2.labels.trash.length; s2.labels.trash = []; save(s2); render(); }, 600);
+    });
+  });
   const box = app.querySelector('[role=checkbox]');
   onPress(box, () => { checked = !checked; box.setAttribute('aria-checked', checked); });
   onPress(app.querySelector('[gh=tm] [role=button]'), () => {
