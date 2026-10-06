@@ -200,7 +200,9 @@ export function Sidebar({ brand, items, bottomItems, activeId, onSelect }: {
 }) {
   const { dark, toggleDark } = useTheme()
   const [open, setOpen] = useState(() => load('sidebar', window.innerWidth >= 900))
-  useEffect(() => save('sidebar', open), [open])
+  useEffect(() => {
+    save('sidebar', open)
+  }, [open])
   const nav = (list: NavItem[]) =>
     list.map((i) => <SideButton key={i.id} icon={i.icon} label={i.label} open={open} active={i.id === activeId} dot={i.dot} onClick={() => onSelect(i.id)} />)
   return (

@@ -36,8 +36,13 @@ function CleanPage({ state, send, goUpdate }: Backend & { goUpdate: () => void }
   const [opts, setOpts] = useState<Options>(() => ({ ...DEFAULTS, ...load('options', {}) }))
   const [confirm, setConfirm] = useState(false)
   const logEnd = useRef<HTMLDivElement>(null)
-  useEffect(() => save('options', opts), [opts])
-  useEffect(() => logEnd.current?.scrollIntoView({ block: 'nearest' }), [state.logs.length])
+  useEffect(() => {
+    save('options', opts)
+  }, [opts])
+  // Phai co ngoac nhon: Chrome moi tra ve Promise tu scrollIntoView, React se tuong la ham don dep
+  useEffect(() => {
+    logEnd.current?.scrollIntoView({ block: 'nearest' })
+  }, [state.logs.length])
 
   const busy = state.status !== 'idle'
   const kept = (opts.startPage - 1) * PAGE_SIZE
