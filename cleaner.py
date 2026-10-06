@@ -5,6 +5,9 @@ chi can sua o day.
 """
 import os
 import re
+from urllib.parse import urldefrag
+
+from playwright.sync_api import Error as PWError
 
 GMAIL_URL = os.environ.get("GC_GMAIL_URL", "https://mail.google.com/mail/")
 PAGE_SIZE = 100
@@ -71,11 +74,21 @@ class Cleaner:
 
     def _wait(self, cond, timeout_s, step_ms=300):
         """Cho den khi cond() dung. Tra ve False neu het gio."""
+        def check():
+            # Gmail tu tai lai trang (vd sau khi luu cai dat): hoi dung luc do thi
+            # Playwright bao "context was destroyed" -> coi nhu chua xong, hoi lai sau.
+            try:
+                return cond()
+            except PWError as e:
+                if "context was destroyed" in str(e) or "navigat" in str(e):
+                    return False
+                raise
+
         for _ in range(int(timeout_s * 1000 / step_ms)):
-            if cond():
+            if check():
                 return True
             self._sleep(step_ms)
-        return cond()
+        return check()
 
     def _visible(self, selector, has_text=None):
         loc = self.page.locator(selector)
@@ -87,12 +100,14 @@ class Cleaner:
         return self.page.url.startswith(GMAIL_URL) and self.page.locator(SEL["main"]).count() > 0
 
     def _hash(self):
-        return self.page.evaluate("location.hash")
+        # lay tu dia chi Playwright dang theo doi, khong chay JS trong trang
+        frag = urldefrag(self.page.url).fragment
+        return "#" + frag if frag else ""
 
     def _open(self, hash_):
         """Mo mot muc roi tai lai trang, de chac chan danh sach dang hien la
         cua dung muc do (khong con danh sach cu cua muc truoc)."""
-        self.page.evaluate("h => { location.hash = h }", hash_)
+        self.page.goto(urldefrag(self.page.url).url + hash_)
         self.page.reload()
         if not self._wait(self._ready, 60):
             raise CleanerError("Gmail tải quá lâu, hãy thử lại.")
