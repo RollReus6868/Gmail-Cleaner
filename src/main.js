@@ -129,7 +129,7 @@ async function updateInstall() {
   try {
     const file = await updater.download(net.fetch, release, kind, process.arch, (progress) => setUpdate({ progress }))
     setUpdate({ status: 'installing' })
-    updater.apply(kind, file, { exe: process.execPath, log: logFile('update.log') })
+    await updater.apply(kind, file, { exe: process.execPath, log: logFile('update.log') })
     app.quit()
   } catch (e) {
     setUpdate({ status: 'error', error: e.message })

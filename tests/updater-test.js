@@ -80,6 +80,26 @@ test('tai ve + kiem SHA-256', async () => {
   await assert.rejects(u.download(fakeFetch(), release({ name: 'khac.exe' }), 'win-setup', 'x64', undefined, tmp()), /chưa có file/)
 })
 
+test('chay bo cai: thu lai khi file dang ban (EBUSY), bo cuoc khi loi khac', async () => {
+  const { EventEmitter } = require('events')
+  let calls = 0
+  // 2 lan dau ban (mot lan nem ra, mot lan qua su kien 'error'), lan 3 chay duoc
+  const flaky = () => {
+    calls++
+    if (calls === 1) throw Object.assign(new Error('spawn EBUSY'), { code: 'EBUSY' })
+    const p = new EventEmitter()
+    p.unref = () => 'da chay'
+    setImmediate(() => (calls === 2 ? p.emit('error', Object.assign(new Error('spawn EBUSY'), { code: 'EBUSY' })) : p.emit('spawn')))
+    return p
+  }
+  assert.equal(await u.spawnRetry('x.exe', [], 20, flaky), 'da chay')
+  assert.equal(calls, 3)
+  const missing = () => { throw Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }) }
+  await assert.rejects(u.spawnRetry('x.exe', [], 20, missing), u.UpdateError)
+  const always = () => { throw Object.assign(new Error('spawn EBUSY'), { code: 'EBUSY' }) }
+  await assert.rejects(u.spawnRetry('x.exe', [], 2, always), /Không chạy được bộ cài/)
+})
+
 // Script bash thay .app chi dung tren macOS (chay duoc ca tren Linux). Tren Windows
 // "bash" la trinh khoi dong WSL, khong co distro thi thoat ma 1 -> bo qua.
 if (process.platform !== 'win32') {

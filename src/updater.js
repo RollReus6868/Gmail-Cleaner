@@ -122,7 +122,9 @@ async function download(fetchFn, release, kind, arch, progress = () => {}, destD
   } catch (e) {
     throw new UpdateError(e.message)
   } finally {
-    await new Promise((r) => out.end(r))
+    // Cho toi 'close' (file da nha han), khong chi 'finish': Windows khong cho chay
+    // mot file .exe con dang mo de ghi (loi "spawn EBUSY").
+    await new Promise((r) => { out.once('close', r); out.end() })
   }
   if (hash.digest('hex') !== want) {
     fs.rmSync(dest, { force: true })
@@ -162,13 +164,30 @@ function launchMacHelper(newApp, targetApp, pid, log) {
   return p
 }
 
-// Bat dau cai ban moi. App phai thoat ngay sau khi goi ham nay.
-function apply(kind, file, { exe, log }) {
+// Chay bo cai, thu lai khi Windows bao file dang ban (EBUSY): phan mem diet virus
+// thuong quet file .exe vua tai ve trong vai giay dau.
+async function spawnRetry(file, args, tries = 20, spawnFn = spawn) {
+  for (let i = 1; ; i++) {
+    try {
+      const p = spawnFn(file, args, { detached: true, stdio: 'ignore' })
+      // loi mo file co the den qua su kien 'error' thay vi nem ra ngay
+      const err = await new Promise((r) => { p.once('error', r); p.once('spawn', () => r(null)) })
+      if (!err) return p.unref()
+      throw err
+    } catch (e) {
+      if (i >= tries || !['EBUSY', 'EACCES', 'EPERM'].includes(e.code)) throw new UpdateError(`Không chạy được bộ cài: ${e.message}`)
+      await new Promise((r) => setTimeout(r, 500))
+    }
+  }
+}
+
+// Bat dau cai ban moi. App phai thoat ngay sau khi ham nay xong.
+async function apply(kind, file, { exe, log }) {
   if (kind === 'win-setup') {
     // NSIS: /S im lang, --updated giu thu muc cai cu, --force-run cai xong mo lai app.
     // Bo cai tu dong app cu neu no con chay.
     const args = ['/S', '--updated'].concat(process.env.GC_UPDATE_NO_RELAUNCH ? [] : ['--force-run'])
-    spawn(file, args, { detached: true, stdio: 'ignore' }).unref()
+    await spawnRetry(file, args)
   } else if (kind === 'mac-app') {
     const out = path.join(path.dirname(file), 'unzipped')
     // ditto giu symlink va chu ky cua .app
@@ -181,5 +200,5 @@ function apply(kind, file, { exe, log }) {
 
 module.exports = {
   APP, REPO, RELEASES_PAGE, UpdateError, parseVersion, newer, macAppPath, installKind, assetName,
-  check, download, apply, launchMacHelper,
+  check, download, apply, launchMacHelper, spawnRetry,
 }
