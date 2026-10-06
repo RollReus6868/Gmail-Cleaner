@@ -31,6 +31,7 @@ const TEXT = {
   // dong chu tren dau Thung rac: "Thu trong Thung rac se duoc tu dong xoa sau 30 ngay. Don sach thung rac ngay"
   emptyTrash: '^\\s*(Empty Trash now|Dọn sạch thùng rác ngay)\\s*$',
   ok: '^\\s*(OK|Đồng ý)\\s*$', // nut xac nhan trong hop "Xac nhan xoa thu"
+  older: '^(Older|Cũ hơn)$', // nut ">" sang trang thu cu hon (so theo aria-label)
 }
 
 class Stopped extends Error {}
@@ -41,12 +42,15 @@ class CleanerError extends Error {}
 // cong cu cu cua muc khac o dang an).
 const PRELUDE = `
   const q = (sel) => [...document.querySelectorAll(sel)].filter((el) => el.getClientRects().length > 0);
-  const byText = (sel, re) => q(sel).filter((el) => new RegExp(re, 'iu').test(el.textContent));
+  const norm = (t) => (t || '').normalize('NFC').replace(/[\\s\u00a0]+/g, ' ').trim(); // (trong chuoi mau nen phai viet 2 dau gach cheo)
+  const byText = (sel, re) => q(sel).filter((el) => new RegExp(re, 'iu').test(norm(el.textContent)));
 `
 const inPage = {
   hasMain: (SEL) => !!document.querySelector(SEL.main),
   rowCount: (SEL) => q(SEL.rows).length,
   counterText: (SEL) => (q(SEL.counter)[0] ? q(SEL.counter)[0].innerText : null),
+  // vai chu dau cua vung danh sach, de ghi vao nhat ky khi khong tim thay nut can bam
+  mainText: (SEL) => norm((document.querySelector(SEL.main) || document.body).innerText).slice(0, 160),
   boxState: (SEL) => (q(SEL.selectAll)[0] ? q(SEL.selectAll)[0].getAttribute('aria-checked') : null),
   // Tim o chon "so cuoc tro chuyen moi trang": la <select> duy nhat co 25, 50, 100.
   pageSize: () => {
@@ -71,7 +75,8 @@ const inPage = {
       forever: () => byText(SEL.toolbarButton, TEXT.deleteForever)[0],
       ok: () => q(SEL.dialogOk)[0] || byText('[role="alertdialog"] button, [role="dialog"] button', TEXT.ok)[0],
       // phan tu trong cung mang dung dong chu do (phan tu con dung sau phan tu cha)
-      emptyTrash: () => byText('span, a, [role="button"], [role="link"]', TEXT.emptyTrash).pop(),
+      emptyTrash: () => byText('span, a, div, td, button', TEXT.emptyTrash).pop(),
+      older: () => q('[gh="tm"] [role="button"][aria-label]').find((el) => new RegExp(TEXT.older, 'iu').test(norm(el.getAttribute('aria-label')))) || q('[gh="tm"] div[act="20"]')[0],
       save: () => q(SEL.saveSettings)[0] || byText('button', TEXT.saveSettings)[0],
     }[kind]()
     if (!el) return null
@@ -195,35 +200,71 @@ class Cleaner {
   }
 
   // ---- xoa ------------------------------------------------------------
-  // So thu tu cua thu dau tien dang hien (vd 201 o trang 3), null neu khong doc duoc.
-  async rangeStart() {
-    const m = /\d[\d.,]*/.exec((await this.js(inPage.counterText, SEL)) || '')
-    return m ? parseInt(m[0].replace(/\D/g, ''), 10) : null
+  // Doc o dem "201–300 trong so 8.263" -> { start: 201, total: 8263 }. null neu khong doc
+  // duoc; total = null khi Gmail chi ghi "trong so nhieu".
+  async counter() {
+    const nums = (((await this.js(inPage.counterText, SEL)) || '').match(/\d[\d.,]*/g) || [])
+      .map((x) => parseInt(x.replace(/\D/g, ''), 10))
+    return nums.length ? { start: nums[0], total: nums.length >= 3 ? nums[2] : null } : null
+  }
+
+  // Tu trang 1 cua muc, chuyen toi trang startPage. Gmail that KHONG giu so trang khi
+  // tai lai (#inbox/p5 + tai lai -> ve trang 1), nen: doi dia chi tai cho; khong duoc thi
+  // bam nut "Cu hon" tung trang. Chi coi la toi noi khi o dem bao dung thu dau trang.
+  async gotoPage(hash, startPage) {
+    const at = (first) => async () => ((await this.counter()) || {}).start === first
+    const first = (startPage - 1) * PAGE_SIZE + 1
+    await this.js((h) => { location.hash = h }, `#${hash}/p${startPage}`)
+    if (await this.wait(at(first), 8)) return true
+    await this.js((h) => { location.hash = h }, `#${hash}`)
+    if (!(await this.wait(at(1), 8))) return false
+    for (let p = 2; p <= startPage; p++) {
+      if (!(await this.clickUntil('older', at((p - 1) * PAGE_SIZE + 1), 6, 6))) return false
+    }
+    return true
   }
 
   // Xoa het thu tu trang startPage tro di trong mot muc. Luon dung o trang
   // startPage: xoa xong, thu cu hon tu don len dung trang nay. Truoc MOI lan xoa
   // deu kiem tra lai rang dang o dung trang; khong chac thi dung muc nay chu khong xoa.
   async cleanView(name, hash, startPage, forever) {
-    const target = startPage > 1 ? `#${hash}/p${startPage}` : `#${hash}`
     const first = (startPage - 1) * PAGE_SIZE + 1
     this.log('info', `${name}: bắt đầu xóa từ trang ${startPage}.`)
-    await this.open(target)
+    await this.open(`#${hash}`)
     let count = 0
     let stuck = 0
     for (;;) {
       this.tick()
-      const n = await this.js(inPage.rowCount, SEL)
-      if (n === 0) break
-      if (this.hash() !== target) {
+      if ((await this.js(inPage.rowCount, SEL)) === 0) break
+      if (this.hash().replace(/\/p\d+$/, '') !== `#${hash}`) {
+        this.log('warn', `${name}: Gmail đang ở mục khác (${this.hash()}) — bỏ qua để an toàn.`)
+        break
+      }
+      let c = await this.counter()
+      const noSuchPage = () => c && c.total !== null && c.total < first
+      if (noSuchPage()) {
         this.log('info', `${name}: không còn trang ${startPage}.`)
         break
       }
-      const start = await this.rangeStart()
-      if (start !== first && !(start === null && startPage === 1)) {
-        this.log('warn', `${name}: không xác nhận được đang ở trang ${startPage} (thư đầu trang là ${start}, cần ${first}) — bỏ qua để an toàn.`)
+      if (startPage > 1 && (!c || c.start !== first)) {
+        // chua o dung trang (luc dau, hoac Gmail tu ve trang khac sau khi xoa): chuyen toi
+        const arrived = await this.gotoPage(hash, startPage)
+        c = await this.counter()
+        if (noSuchPage()) {
+          this.log('info', `${name}: không còn trang ${startPage}.`)
+          break
+        }
+        if (!arrived) {
+          this.log('warn', `${name}: không chuyển được tới trang ${startPage} (thư đầu trang đang là ${c ? c.start : '?'}, cần ${first}) — bỏ qua để an toàn.`)
+          break
+        }
+        continue // kiem tra lai tu dau roi moi xoa
+      }
+      if (c && c.start !== first) {
+        this.log('warn', `${name}: không xác nhận được đang ở trang ${startPage} (thư đầu trang là ${c.start}, cần ${first}) — bỏ qua để an toàn.`)
         break
       }
+      const n = await this.js(inPage.rowCount, SEL)
       const checked = async () => (await this.js(inPage.boxState, SEL)) === 'true'
       if (!(await checked())) {
         const ok = await this.clickUntil('box', checked, 3, 5)
@@ -261,10 +302,19 @@ class Cleaner {
       this.log('ok', `${name}: đã trống sẵn.`)
       return
     }
-    // "1–100 trong so 1.234" -> 1234 (chi de bao cao)
-    const nums = ((await this.js(inPage.counterText, SEL)) || '').match(/\d[\d.,]*/g) || []
-    const total = nums.length ? parseInt(nums[nums.length - 1].replace(/\D/g, ''), 10) : 0
-    const asked = await this.clickUntil('emptyTrash', () => this.js(inPage.target, SEL, TEXT, 'ok', false), 4, 6)
+    const total = ((await this.counter()) || {}).total || 0 // chi de bao cao
+    const found = async () => (await this.js(inPage.target, SEL, TEXT, 'emptyTrash', false)) !== null
+    await this.wait(found, 5) // dong chu nay co the hien cham hon danh sach
+    const ask = () => this.clickUntil('emptyTrash', () => this.js(inPage.target, SEL, TEXT, 'ok', false), 4, 6)
+    let asked = await ask()
+    if (asked === null) {
+      // khong thay dong chu do o muc Thung rac: thu trang tim kiem "in:trash" (cung co nut nay)
+      await this.js((h) => { location.hash = h }, '#search/in%3Atrash')
+      await this.wait(found, 8)
+      asked = await ask()
+    }
+    if (asked === null) this.log('warn', `${name}: không thấy dòng "Dọn sạch thùng rác ngay". Chữ đầu trang: "${await this.js(inPage.mainText, SEL)}"`)
+    else if (!asked) this.log('warn', `${name}: đã bấm "Dọn sạch thùng rác ngay" nhưng không thấy hộp xác nhận.`)
     if (asked) {
       this.log('info', `${name}: đã bấm "Dọn sạch thùng rác ngay", đang chờ Gmail xóa…`)
       const done = await this.clickUntil('ok', empty, 60, 60)
@@ -275,7 +325,7 @@ class Cleaner {
         return
       }
     }
-    this.log('warn', `${name}: không dùng được nút "Dọn sạch thùng rác ngay", chuyển sang xóa từng trang.`)
+    this.log('warn', `${name}: chuyển sang xóa từng trang.`)
     await this.cleanView(name, hash, 1, forever)
   }
 

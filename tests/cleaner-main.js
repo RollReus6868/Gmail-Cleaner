@@ -10,9 +10,9 @@ const cleaner = require('../src/cleaner')
 const COUNTS = { inbox: 430, 'category/social': 250, 'category/promotions': 120, spam: 30 }
 let wc
 
-async function seed(size = 50, overflow = 'prev', trustedOnly = false, emptyLink = true) {
+async function seed(size = 50, opts = {}) {
   await wc.loadURL(cleaner.GMAIL_URL)
-  await wc.executeJavaScript(`seed(${JSON.stringify(COUNTS)}, ${size}, '${overflow}', ${trustedOnly}, ${emptyLink})`)
+  await wc.executeJavaScript(`seed(${JSON.stringify(COUNTS)}, ${size}, ${JSON.stringify(opts)})`)
   wc.reload()
   await new Promise((r) => wc.once('did-finish-load', r))
 }
@@ -32,24 +32,34 @@ async function main() {
   wc = win.webContents
 
   // 1. Xoa tu trang 3: giu dung 200 thu moi nhat moi muc, don sach thung rac.
-  //    Lan dau nut chi nhan CHUOT THAT (nhu Gmail that), lan sau nhan ca JS.
-  for (const [overflow, trustedOnly] of [['prev', true], ['stay', false]]) {
-    await seed(50, overflow, trustedOnly)
-    const c = make([])
+  //    Thu moi kieu Gmail co the cu xu: nut chi nhan chuot that; het trang thi o lai trang
+  //    trong; khong nhay thang toi trang N duoc (phai bam "Cu hon"); xoa xong tu ve trang 1.
+  const variants = [
+    { overflow: 'prev', trustedOnly: true },
+    { overflow: 'stay' },
+    { hashPaging: false, trustedOnly: true },
+    { backToFirst: true },
+    { hashPaging: false, backToFirst: true },
+  ]
+  for (const opts of variants) {
+    await seed(50, opts)
+    const logs = []
+    const c = make(logs)
     await c.login()
     await c.run(['inbox', 'social'], 3, true)
     const [size, n, labels, emptied] = await sizes()
+    if (emptied !== 280) console.log(logs.map((l) => l.join(' | ')).join('\n')) // de chan doan khi loi
     // Thung rac (280 thu, nhieu hon mot trang) phai duoc don bang MOT lan bam "Don sach thung rac ngay"
     assert.equal(emptied, 280, 'phai dung nut Don sach thung rac ngay')
     assert.equal(size, 100)
     assert.deepEqual(n, { trash: 0, inbox: 200, 'category/social': 200, 'category/promotions': 120, spam: 30 })
     assert.deepEqual(labels.inbox, Array.from({ length: 200 }, (_, i) => `inbox-${i + 1}`), 'phai giu 200 thu dau')
     assert.equal(c.deleted, 230 + 50 + 280)
-    console.log(`OK  [${overflow}${trustedOnly ? ', chi chuot that' : ''}] xoa tu trang 3 + don thung rac`)
+    console.log(`OK  ${JSON.stringify(opts)} xoa tu trang 3 + don thung rac`)
   }
 
   // 1b. Thung rac khong co dong "Don sach thung rac ngay": van phai don het bang cach xoa tung trang
-  await seed(100, 'prev', false, false)
+  await seed(100, { emptyLink: false })
   const logs1b = []
   let c = make(logs1b)
   await c.login()

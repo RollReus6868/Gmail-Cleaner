@@ -1,24 +1,41 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>Hộp thư đến - test@gmail.com - Gmail</title>
-<!-- Gmail gia lap: chi mo phong dung nhung phan tu ma src/cleaner.js dung toi. -->
+<!-- Gmail gia lap: chi mo phong dung nhung phan tu va thoi quen ma src/cleaner.js dua vao.
+     Thoi quen da thay o Gmail that (06/10/2026):
+       - tai lai trang thi so trang MAT (#inbox/p5 + tai lai -> ve trang 1 cua muc do);
+       - nut thanh cong cu nghe mousedown roi mouseup, khong nghe click. -->
 <div style="display:none"><div gh="tm"><span role="checkbox" aria-checked="false"></span><div act="10" role="button">cu</div></div></div>
 <div id="app"></div>
 <script>
 const KEY = 'mock';
 const load = () => JSON.parse(sessionStorage.getItem(KEY) || 'null');
 const save = s => sessionStorage.setItem(KEY, JSON.stringify(s));
-// seed(counts, size, overflow, trustedOnly, emptyLink): overflow = 'prev' (nhay ve trang truoc) | 'stay';
-// trustedOnly = nut chi nhan chuot THAT (su kien do JS tao ra bi bo qua);
-// emptyLink = Thung rac co dong "Don sach thung rac ngay" (nhu Gmail that).
-window.seed = (counts, size = 50, overflow = 'prev', trustedOnly = false, emptyLink = true) => {
+// seed(counts, size, opts):
+//   overflow    'prev' = het trang thi nhay ve trang truoc | 'stay' = o lai trang trong
+//   trustedOnly nut chi nhan chuot THAT (su kien do JS tao ra bi bo qua)
+//   emptyLink   Thung rac co dong "Don sach thung rac ngay"
+//   hashPaging  doi dia chi #muc/pN thi nhay thang toi trang N; false = chi nut "Cu hon" moi sang trang
+//   backToFirst xoa xong thi Gmail tu ve trang 1
+window.seed = (counts, size = 50, opts = {}) => {
   const labels = { trash: [] };
   for (const [k, n] of Object.entries(counts)) labels[k] = Array.from({ length: n }, (_, i) => k + '-' + (i + 1));
-  save({ size, overflow, trustedOnly, emptyLink, emptied: 0, labels });
+  save({ size, overflow: 'prev', trustedOnly: false, emptyLink: true, hashPaging: true, backToFirst: false, ...opts, emptied: 0, labels });
 };
 window.dump = () => { const s = load(); return { size: s.size, labels: s.labels, emptied: s.emptied }; };
+
 let checked = false;
-// Giong Gmail: nut thanh cong cu nghe mousedown roi mouseup tren CUNG nut do, khong nghe click.
+let cur = { label: 'inbox', page: 1 };   // trang dang hien (nguon su that; dia chi chi la anh xa)
+const parse = () => {
+  const m = (location.hash.slice(1) || 'inbox').match(/^(.*?)(?:\/p(\d+))?$/);
+  return { label: m[1], page: +(m[2] || 1) };
+};
+const show = (label, page) => {          // chuyen trang "tu ben trong" (nut Cu hon, sau khi xoa...)
+  cur = { label, page };
+  const h = '#' + label + (page > 1 ? '/p' + page : '');
+  if (location.hash !== h) location.hash = h; else render();
+};
+// Giong Gmail: nghe mousedown roi mouseup tren CUNG nut do.
 function onPress(el, fn) {
   let down = false;
   const ok = (e) => e.isTrusted || !load().trustedOnly;
@@ -29,8 +46,8 @@ function onPress(el, fn) {
 function render() {
   const s = load(), app = document.getElementById('app');
   if (!s) { app.innerHTML = ''; return; }
-  const hash = location.hash.slice(1) || 'inbox';
-  if (hash.startsWith('settings')) {
+  const { label, page } = cur;
+  if (label.startsWith('settings')) {
     app.innerHTML = '<div role="main"><select id="ps">' + [10, 15, 20, 25, 50, 100].map(n =>
       `<option${n === s.size ? ' selected' : ''}>${n}</option>`).join('') +
       '</select><select><option>a</option></select><button guidedhelpid="save_changes_button">Lưu thay đổi</button></div>';
@@ -40,20 +57,19 @@ function render() {
     });
     return;
   }
-  const m = hash.match(/^(.*?)(?:\/p(\d+))?$/), label = m[1], page = +(m[2] || 1);
   const all = s.labels[label] || [], from = (page - 1) * s.size, rows = all.slice(from, from + s.size);
   if (page > 1 && rows.length === 0 && s.overflow === 'prev') {
-    const last = Math.max(1, Math.ceil(all.length / s.size));
-    location.hash = '#' + label + (last > 1 ? '/p' + last : ''); return;
+    return show(label, Math.max(1, Math.ceil(all.length / s.size)));
   }
   const forever = label === 'trash' || label === 'spam';
   checked = false;
   app.innerHTML = `<div gh="tm"><span role="checkbox" aria-checked="false">[ ]</span>` +
-    (forever ? '<div role="button">Xóa vĩnh viễn</div>' : '<div act="10" role="button" aria-label="Xóa">X</div>') +
+    (forever ? '<div role="button" id="del">Xóa vĩnh viễn</div>' : '<div act="10" role="button" id="del" aria-label="Xóa">X</div>') +
     (rows.length ? `<span class="Dj"><span class="ts">${(from + 1).toLocaleString('vi')}</span>–<span class="ts">${from + rows.length}</span> trong số <span class="ts">${all.length.toLocaleString('vi')}</span></span>` : '') +
+    `<div role="button" aria-label="Mới hơn" id="newer">&lt;</div><div role="button" aria-label="Cũ hơn" id="older">&gt;</div>` +
     `</div><div role="main">` +
     (label === 'trash' && all.length && s.emptyLink
-      ? '<div class="ya">Thư trong Thùng rác sẽ được tự động xóa sau 30 ngày. <span class="x2" role="button">Dọn sạch thùng rác ngay</span></div>' : '') +
+      ? '<div class="ya">Thư trong Thùng rác sẽ được tự động xóa sau 30 ngày. <span class="x2" role="button">Dọn sạch thùng rác ngay</span></div>' : '') +
     `<table>${rows.map(r => `<tr class="zA"><td>${r}</td></tr>`).join('')}</table></div>`;
   const link = app.querySelector('.x2');
   if (link) onPress(link, () => {   // hoi lai truoc khi xoa, nhu Gmail
@@ -68,16 +84,27 @@ function render() {
   });
   const box = app.querySelector('[role=checkbox]');
   onPress(box, () => { checked = !checked; box.setAttribute('aria-checked', checked); });
-  onPress(app.querySelector('[gh=tm] [role=button]'), () => {
+  onPress(app.querySelector('#older'), () => { if (from + s.size < all.length) show(label, page + 1); });
+  onPress(app.querySelector('#newer'), () => { if (page > 1) show(label, page - 1); });
+  onPress(app.querySelector('#del'), () => {
     if (!checked) return;
     setTimeout(() => {   // Gmail xoa khong tuc thi
       const s2 = load();
       const gone = s2.labels[label].splice(from, s2.size);
       if (!forever) s2.labels.trash.push(...gone);
-      save(s2); render();
+      save(s2);
+      if (s2.backToFirst) show(label, 1); else render();
     }, 400);
   });
 }
-addEventListener('hashchange', render);
-setTimeout(render, 300);   // Gmail tai cham mot chut sau khi reload
+
+// Nguoi dung / tool doi dia chi: sang muc khac thi luon duoc; nhay thang toi trang N chi khi hashPaging.
+addEventListener('hashchange', () => {
+  const want = parse(), s = load();
+  if (want.label === cur.label && want.page === cur.page) return render();
+  if (want.page > 1 && s && !s.hashPaging) return show(want.label, want.label === cur.label ? cur.page : 1);
+  cur = want; render();
+});
+// Tai lai trang: giu muc, MAT so trang.
+setTimeout(() => { show(parse().label, 1); }, 300);
 </script>
