@@ -69,7 +69,15 @@ function applyLoginMode() {
 }
 
 // Google vua tu choi: chuyen sang kieu tiep theo chua thu va mo lai Gmail.
+let rotating = false
 async function nextLoginMode() {
+  // Trang bi tu choi con hien vai giay trong luc doi kieu: khong tinh no thanh lan tu choi nua
+  if (rotating) return
+  rotating = true
+  try { await rotateLoginMode() } finally { rotating = false }
+}
+
+async function rotateLoginMode() {
   triedModes.add(loginMode)
   const next = LOGIN_MODES.find((m) => !triedModes.has(m))
   if (!next) {
@@ -83,7 +91,7 @@ async function nextLoginMode() {
   loginMode = next
   await gmail.webContents.session.clearStorageData().catch(() => {})
   applyLoginMode()
-  gmail.webContents.loadURL(GMAIL_URL).catch(() => {})
+  await gmail.webContents.loadURL(GMAIL_URL).catch(() => {}) // cho trang moi tai xong
 }
 
 // ---- khung Gmail --------------------------------------------------------------------
