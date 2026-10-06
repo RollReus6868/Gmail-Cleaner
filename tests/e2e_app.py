@@ -89,6 +89,13 @@ try:
             for entry in st["logs"]:
                 print("   ", entry["t"], entry["level"], entry["msg"])
             print("---- CAC CUA SO:", [pg.url for pg in ctx.pages])
+            print("---- GIAO DIEN:", ui.evaluate("""() => new Promise(done => {
+                const info = {visibility: document.visibilityState, focus: document.hasFocus(),
+                              size: [innerWidth, innerHeight], raf: false,
+                              text: document.body.innerText.slice(0, 1500)};
+                requestAnimationFrame(() => { info.raf = true; });
+                setTimeout(() => done(info), 1500);
+            })"""))
             raise
 
         # Dong cua so giao dien -> chuong trinh tu thoat
