@@ -177,7 +177,8 @@ jobs:
     timeout-minutes: 45
     env:
       VERSION: ${{ needs.test.outputs.version }}
-      ZIP: release/GmailCleaner-${{ needs.test.outputs.version }}-mac-${{ matrix.arch }}.zip
+      # Khong dat ten la ZIP: lenh zip doc tuy chon tu bien moi truong ten do
+      MAC_ZIP: release/GmailCleaner-${{ needs.test.outputs.version }}-mac-${{ matrix.arch }}.zip
     steps:
       - uses: actions/checkout@v7
 
@@ -206,7 +207,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -dv "$APP" 2>&1 | grep -E "Signature|Identifier|Format" || true
           mkdir -p release
-          cp "dist/GmailCleaner-$VERSION-mac-${{ matrix.arch }}.zip" "$ZIP"
+          cp "dist/GmailCleaner-$VERSION-mac-${{ matrix.arch }}.zip" "$MAC_ZIP"
           ls -la release
 
       - name: Chay that app da dong goi
@@ -216,14 +217,14 @@ jobs:
         run: |
           UNZ="$RUNNER_TEMP/thu muc cai"
           rm -rf "$UNZ" && mkdir -p "$UNZ"
-          ditto -x -k "$ZIP" "$UNZ"
+          ditto -x -k "$MAC_ZIP" "$UNZ"
           codesign --verify --deep --strict --verbose=2 "$UNZ/GmailCleaner.app"
           GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" node tests/ci-run.js node tests/e2e-app.js
 
       - name: Tu cap nhat that (app tai zip, tu thoat, thay .app)
         run: |
           UNZ="$RUNNER_TEMP/thu muc cai"
-          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" GC_UPDATE_FILE="$ZIP" \
+          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" GC_UPDATE_FILE="$MAC_ZIP" \
           node tests/ci-run.js node tests/e2e-update.js
           GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" node tests/ci-run.js node tests/e2e-app.js
 
