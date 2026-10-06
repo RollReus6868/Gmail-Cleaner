@@ -72,15 +72,15 @@ jobs:
             || { echo "::error::RELEASE_NOTES.md chua nhac toi phien ban hien tai"; exit 1; }
 
       - name: Kiem thu tu cap nhat
-        run: python -X dev -m unittest discover -s tests -p "test_updater.py" -v
+        run: python tests/ci_run.py python -X dev -m unittest discover -s tests -p "test_updater.py" -v
 
       - name: Kiem thu loi xoa thu (Gmail gia lap)
-        run: python tests/test_cleaner.py
+        run: python tests/ci_run.py python tests/test_cleaner.py
 
       - name: Chay that app tu ma nguon (2 cua so, Gmail gia lap)
         run: |
-          xvfb-run -a -s "-screen 0 1400x900x24" python tests/e2e_app.py
-          xvfb-run -a -s "-screen 0 1400x900x24" python tests/e2e_update.py
+          xvfb-run -a -s "-screen 0 1400x900x24" python tests/ci_run.py python tests/e2e_app.py
+          xvfb-run -a -s "-screen 0 1400x900x24" python tests/ci_run.py python tests/e2e_update.py
 
   # ------------------------------------------------------------------ 2. Windows
   windows:
@@ -109,14 +109,14 @@ jobs:
 
       - name: Kiem thu tren Windows
         run: |
-          python -X dev -m unittest discover -s tests -p "test_updater.py" -v
-          python tests/test_cleaner.py
+          python tests/ci_run.py python -X dev -m unittest discover -s tests -p "test_updater.py" -v
+          python tests/ci_run.py python tests/test_cleaner.py
 
       - name: Dong goi (PyInstaller)
-        run: python -m PyInstaller --noconfirm --clean GmailCleaner.spec
+        run: python tests/ci_run.py python -m PyInstaller --noconfirm --clean GmailCleaner.spec
 
       - name: Chay that app da dong goi
-        run: GC_APP=dist/GmailCleaner/GmailCleaner.exe python tests/e2e_app.py
+        run: GC_APP=dist/GmailCleaner/GmailCleaner.exe python tests/ci_run.py python tests/e2e_app.py
 
       - name: Cai Inno Setup
         shell: pwsh
@@ -149,8 +149,13 @@ jobs:
       - name: Tao bo cai dat
         shell: pwsh
         run: |
-          & $env:ISCC "/DAppVersion=$env:VERSION" "installer\GmailCleaner.iss"
-          if ($LASTEXITCODE -ne 0) { throw "ISCC loi, ma thoat $LASTEXITCODE" }
+          $out = & $env:ISCC "/DAppVersion=$env:VERSION" "installer\GmailCleaner.iss" 2>&1
+          $code = $LASTEXITCODE
+          $out | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0) {
+            Write-Host "::error title=ISCC loi::$(($out | Select-Object -Last 20) -join '%0A')"
+            throw "ISCC loi, ma thoat $code"
+          }
           Get-ChildItem dist\*.exe
 
       - name: Cai dat im lang vao thu muc co dau cach
@@ -159,21 +164,25 @@ jobs:
           $setup = "dist\GmailCleaner-$env:VERSION-windows-setup.exe"
           $log = Join-Path $env:RUNNER_TEMP 'setup_log.txt'
           $p = Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$env:INSTALL_DIR`"","/LOG=`"$log`"" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 40; throw "bo cai thoat voi ma $($p.ExitCode)" }
+          if ($p.ExitCode -ne 0) {
+            Get-Content $log -Tail 40
+            Write-Host "::error title=Bo cai loi::$((Get-Content $log -Tail 25) -join '%0A')"
+            throw "bo cai thoat voi ma $($p.ExitCode)"
+          }
           if (-not (Test-Path "$env:INSTALL_DIR\GmailCleaner.exe")) { throw "app chua duoc cai" }
           if (-not (Test-Path "$env:INSTALL_DIR\unins000.exe")) { throw "thieu trinh go cai dat" }
 
       - name: Chay that app da cai
-        run: GC_APP="$INSTALL_DIR\\GmailCleaner.exe" python tests/e2e_app.py
+        run: GC_APP="$INSTALL_DIR\\GmailCleaner.exe" python tests/ci_run.py python tests/e2e_app.py
 
       - name: Tu cap nhat that (app tai bo cai, tu thoat, bo cai ghi de)
         run: |
           GC_APP="$INSTALL_DIR\\GmailCleaner.exe" \
           GC_UPDATE_FILE="dist/GmailCleaner-$VERSION-windows-setup.exe" \
-          python tests/e2e_update.py
+          python tests/ci_run.py python tests/e2e_update.py
 
       - name: App van chay sau khi tu cap nhat
-        run: GC_APP="$INSTALL_DIR\\GmailCleaner.exe" python tests/e2e_app.py
+        run: GC_APP="$INSTALL_DIR\\GmailCleaner.exe" python tests/ci_run.py python tests/e2e_app.py
 
       - name: Go cai dat
         shell: pwsh
@@ -238,11 +247,11 @@ jobs:
 
       - name: Kiem thu tren macOS
         run: |
-          python -X dev -m unittest discover -s tests -p "test_updater.py" -v
-          python tests/test_cleaner.py
+          python tests/ci_run.py python -X dev -m unittest discover -s tests -p "test_updater.py" -v
+          python tests/ci_run.py python tests/test_cleaner.py
 
       - name: Dong goi .app
-        run: python -m PyInstaller --noconfirm --clean GmailCleaner.spec
+        run: python tests/ci_run.py python -m PyInstaller --noconfirm --clean GmailCleaner.spec
 
       - name: Kiem tra kien truc
         run: |
@@ -263,7 +272,7 @@ jobs:
           codesign -dv "$APP" 2>&1 | grep -E "Signature|Identifier|Format" || true
 
       - name: Chay that app da dong goi
-        run: GC_APP=dist/GmailCleaner.app/Contents/MacOS/GmailCleaner python tests/e2e_app.py
+        run: GC_APP=dist/GmailCleaner.app/Contents/MacOS/GmailCleaner python tests/ci_run.py python tests/e2e_app.py
 
       - name: Nen zip (ditto giu symlink + chu ky)
         run: |
@@ -277,15 +286,15 @@ jobs:
           rm -rf "$UNZ" && mkdir -p "$UNZ"
           ditto -x -k "release/GmailCleaner-$VERSION-mac-${{ matrix.arch }}.zip" "$UNZ"
           codesign --verify --deep --strict --verbose=2 "$UNZ/GmailCleaner.app"
-          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" python tests/e2e_app.py
+          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" python tests/ci_run.py python tests/e2e_app.py
 
       - name: Tu cap nhat that (app tai zip, tu thoat, thay .app)
         run: |
           UNZ="$RUNNER_TEMP/thu muc cai"
           GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" \
           GC_UPDATE_FILE="release/GmailCleaner-$VERSION-mac-${{ matrix.arch }}.zip" \
-          python tests/e2e_update.py
-          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" python tests/e2e_app.py
+          python tests/ci_run.py python tests/e2e_update.py
+          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" python tests/ci_run.py python tests/e2e_app.py
 
       - uses: actions/upload-artifact@v7
         with:
