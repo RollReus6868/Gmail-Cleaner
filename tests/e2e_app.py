@@ -56,31 +56,40 @@ try:
         print("PHIEN BAN", st["version"], "| CAP NHAT:", up["status"], up["error"])
         assert up["status"] in ("none", "available") or up["error"].startswith("HTTP "), up
 
-        # Buoc 1: bam dang nhap -> cua so Gmail mo ra, tool cho nguoi dung dang nhap
-        ui.get_by_role("button", name="Đăng nhập Gmail").click()
-        ui.get_by_text("Đang chờ đăng nhập").wait_for()
-        gmail = find(ctx, "mock_gmail")
-        # "nguoi dung dang nhap xong": Gmail gia lap co du lieu
-        gmail.evaluate("seed({inbox: 350, 'category/social': 130, 'category/promotions': 90}, 50)")
-        gmail.reload()
-        ui.get_by_text("Đã đăng nhập: test@gmail.com").wait_for(timeout=15000)
+        try:
+            # Buoc 1: bam dang nhap -> cua so Gmail mo ra, tool cho nguoi dung dang nhap
+            ui.get_by_role("button", name="Đăng nhập Gmail").click()
+            ui.get_by_text("Đang chờ đăng nhập").wait_for()
+            gmail = find(ctx, "mock_gmail")
+            # "nguoi dung dang nhap xong": Gmail gia lap co du lieu
+            gmail.evaluate("seed({inbox: 350, 'category/social': 130, 'category/promotions': 90}, 50)")
+            gmail.reload()
+            ui.get_by_text("Đã đăng nhập: test@gmail.com").wait_for(timeout=15000)
 
-        # Buoc 2-3: chon Hop thu den + Mang xa hoi (bo Quang cao), xoa tu trang 2
-        ui.get_by_role("button", name="Hộp thư đến").click()
-        ui.get_by_role("button", name="Quảng cáo").click()
-        ui.get_by_role("spinbutton").fill("2")
-        ui.get_by_role("button", name="Bắt đầu xóa").click()
-        ui.get_by_role("dialog").get_by_role("button", name="Xóa").click()
-        ui.get_by_role("button", name="Dừng").wait_for()
-        ui.screenshot(path=OUT / "e2e-dang-chay.png")
-        ui.get_by_text("Hoàn tất. Tổng cộng đã xóa 560").wait_for(timeout=90000)
-        ui.get_by_role("button", name="Bắt đầu xóa").wait_for()
-        d = gmail.evaluate("dump()")
-        n = {k: len(v) for k, v in d["labels"].items()}
-        assert d["size"] == 100 and n == {"inbox": 100, "category/social": 100,
-                                          "category/promotions": 90, "trash": 0}, (d["size"], n)
-        ui.screenshot(path=OUT / "e2e-xong.png")
-        print("E2E OK", n)
+            # Buoc 2-3: chon Hop thu den + Mang xa hoi (bo Quang cao), xoa tu trang 2
+            ui.get_by_role("button", name="Hộp thư đến").click()
+            ui.get_by_role("button", name="Quảng cáo").click()
+            ui.get_by_role("spinbutton").fill("2")
+            ui.get_by_role("button", name="Bắt đầu xóa").click()
+            ui.get_by_role("dialog").get_by_role("button", name="Xóa").click()
+            ui.get_by_role("button", name="Dừng").wait_for()
+            ui.screenshot(path=OUT / "e2e-dang-chay.png")
+            ui.get_by_text("Hoàn tất. Tổng cộng đã xóa 560").wait_for(timeout=90000)
+            ui.get_by_role("button", name="Bắt đầu xóa").wait_for()
+            d = gmail.evaluate("dump()")
+            n = {k: len(v) for k, v in d["labels"].items()}
+            assert d["size"] == 100 and n == {"inbox": 100, "category/social": 100,
+                                              "category/promotions": 90, "trash": 0}, (d["size"], n)
+            ui.screenshot(path=OUT / "e2e-xong.png")
+            print("E2E OK", n)
+
+        except Exception:
+            st = ui.evaluate("window.gcCall('hello')")
+            print("---- TRANG THAI APP LUC LOI:", st["status"], st["account"], st["update"])
+            for entry in st["logs"]:
+                print("   ", entry["t"], entry["level"], entry["msg"])
+            print("---- CAC CUA SO:", [pg.url for pg in ctx.pages])
+            raise
 
         # Dong cua so giao dien -> chuong trinh tu thoat
         ui.close()
