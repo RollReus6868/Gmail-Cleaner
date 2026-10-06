@@ -4,7 +4,7 @@
 const assert = require('assert')
 const fs = require('fs')
 const path = require('path')
-const { run, sleep } = require('./lib')
+const { run, sleep, MOCK_URL } = require('./lib')
 
 run(9333, {}, async ({ ui, find, exited }) => {
   await ui.getByRole('button', { name: 'Bắt đầu xóa' }).waitFor()
@@ -27,6 +27,25 @@ run(9333, {}, async ({ ui, find, exited }) => {
   assert(pane.width > 300 && pane.height > 300, JSON.stringify(pane))
   const size = await gmail.evaluate(() => [innerWidth, innerHeight])
   assert(Math.abs(size[0] - pane.width) <= 2 && Math.abs(size[1] - pane.height) <= 2, `khung ${JSON.stringify(pane)} != trang ${size}`)
+
+  // Google tu choi dang nhap (trang .../signin/rejected): app phai tu doi kieu trinh duyet
+  // va mo lai Gmail, lan luot app -> electron -> firefox, het thi bao loi mot lan.
+  const ua = () => gmail.evaluate(() => navigator.userAgent)
+  const reject = async () => {
+    await gmail.goto(MOCK_URL + '?v3/signin/rejected')
+    await gmail.waitForURL((u) => !u.href.includes('rejected'), { timeout: 15000 })
+  }
+  assert(!/Electron/.test(await ua()) && /Chrome\//.test(await ua()), await ua())
+  await reject()
+  assert(/Electron\//.test(await ua()), await ua())
+  await reject()
+  assert(/Firefox\//.test(await ua()) && !/Chrome/.test(await ua()), await ua())
+  await ui.getByText('Tool tự thử lại với kiểu "firefox"').waitFor()
+  await gmail.goto(MOCK_URL + '?v3/signin/rejected')
+  await ui.getByText('Google từ chối đăng nhập với cả 3 kiểu').waitFor({ timeout: 15000 })
+  console.log('TU DOI KIEU TRINH DUYET KHI GOOGLE TU CHOI: OK')
+  await ui.getByRole('button', { name: 'Về Gmail' }).click()
+  await gmail.waitForURL((u) => !u.href.includes('rejected'), { timeout: 15000 })
 
   // "Nguoi dung dang nhap xong": Gmail gia lap co du lieu -> app tu nhan ra tai khoan
   await gmail.evaluate(() => window.seed({ inbox: 350, 'category/social': 130, 'category/promotions': 90 }, 50))

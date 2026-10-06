@@ -1,7 +1,7 @@
 {
   "name": "gmail-cleaner",
   "productName": "GmailCleaner",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Tool tu dong don thu cu tren Gmail, trinh duyet nhung ngay trong tool",
   "main": "src/main.js",
   "author": "RollReus6868",

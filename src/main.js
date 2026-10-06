@@ -32,12 +32,73 @@ function log(level, msg) {
 const tick = () => { if (stop) throw new Stopped() }
 const logFile = (name) => path.join(app.getPath('userData'), name)
 
+// ---- kieu trinh duyet khi dang nhap Google ------------------------------------------
+// Google tu choi dang nhap ("This browser or app may not be secure") tuy theo
+// User-Agent cua trinh duyet nhung, va cach xet thay doi theo thoi gian. Khong thu
+// duoc voi tai khoan that tu noi viet ma, nen app TU THU lan luot cac kieu duoi day
+// moi khi Google tu choi, va nho kieu nao dang nhap duoc.
+//   app      - bo chu "Electron/x", giu ten app (giong mot trinh duyet Chromium khac)
+//   electron - de nguyen User-Agent mac dinh cua Electron
+//   firefox  - gia lam Firefox (bo luon cac header sec-ch-ua ma Firefox khong gui)
+const LOGIN_MODES = ['app', 'electron', 'firefox']
+// Trang "Couldn't sign you in" cua Google: nhan theo dia chi, hoac theo chu tren trang
+const REJECTED = /signin\/rejected|deniedsigninrejected/
+const REJECTED_TEXT = /may not be secure|có thể không an toàn/i
+const settingsFile = () => path.join(app.getPath('userData'), 'settings.json')
+function readSettings() {
+  try { return JSON.parse(fs.readFileSync(settingsFile(), 'utf8')) } catch (_) { return {} }
+}
+let loginMode = 'app'
+let triedModes = new Set()
+let defaultUA = ''
+
+function userAgentFor(mode) {
+  if (mode === 'electron') return defaultUA
+  if (mode === 'firefox') {
+    const os = process.platform === 'darwin' ? 'Macintosh; Intel Mac OS X 10.15'
+      : process.platform === 'win32' ? 'Windows NT 10.0; Win64; x64' : 'X11; Linux x86_64'
+    return `Mozilla/5.0 (${os}; rv:140.0) Gecko/20100101 Firefox/140.0`
+  }
+  return defaultUA.replace(/\sElectron\/\S+/i, '')
+}
+
+function applyLoginMode() {
+  const ua = userAgentFor(loginMode)
+  gmail.webContents.session.setUserAgent(ua)
+  gmail.webContents.setUserAgent(ua)
+}
+
+// Google vua tu choi: chuyen sang kieu tiep theo chua thu va mo lai Gmail.
+async function nextLoginMode() {
+  triedModes.add(loginMode)
+  const next = LOGIN_MODES.find((m) => !triedModes.has(m))
+  if (!next) {
+    if (!triedModes.has('het')) {
+      triedModes.add('het')
+      log('error', 'Google từ chối đăng nhập với cả 3 kiểu trình duyệt của tool. Bấm "Về Gmail" để thử lại, hoặc báo lại kèm ảnh chụp.')
+    }
+    return
+  }
+  log('warn', `Google từ chối đăng nhập (kiểu trình duyệt "${loginMode}"). Tool tự thử lại với kiểu "${next}"…`)
+  loginMode = next
+  await gmail.webContents.session.clearStorageData().catch(() => {})
+  applyLoginMode()
+  gmail.webContents.loadURL(GMAIL_URL).catch(() => {})
+}
+
 // ---- khung Gmail --------------------------------------------------------------------
 function createGmailView() {
   const ses = session.fromPartition('persist:gmail')
-  // Google chan dang nhap tu "trinh duyet nhung" khi thay chu Electron trong User-Agent.
-  ses.setUserAgent(ses.getUserAgent().replace(/\s(Electron|GmailCleaner|gmail-cleaner)\/\S+/gi, ''))
+  defaultUA = ses.getUserAgent()
+  const saved = readSettings().loginMode
+  if (LOGIN_MODES.includes(saved)) loginMode = saved
+  ses.webRequest.onBeforeSendHeaders((details, done) => {
+    const headers = details.requestHeaders
+    if (loginMode === 'firefox') for (const h of Object.keys(headers)) if (/^sec-ch-ua/i.test(h)) delete headers[h]
+    done({ requestHeaders: headers })
+  })
   gmail = new WebContentsView({ webPreferences: { session: ses, backgroundThrottling: false } })
+  applyLoginMode()
   const wc = gmail.webContents
   // Cua so pop-up cua Google (dang nhap, chon tai khoan) mo ngay trong khung;
   // lien ket ra trang khac thi mo bang trinh duyet mac dinh.
@@ -63,6 +124,11 @@ function setPane(r) {
 async function refreshAccount() {
   if (!gmail || gmail.webContents.isDestroyed() || busy) return
   const wc = gmail.webContents
+  if (REJECTED.test(wc.getURL())) return nextLoginMode()
+  if (/^https:\/\/accounts\.google\.com\//.test(wc.getURL()) && !wc.isLoading()) {
+    const text = await wc.executeJavaScript('document.body ? document.body.innerText.slice(0, 2000) : ""').catch(() => '')
+    if (REJECTED_TEXT.test(text)) return nextLoginMode()
+  }
   let account = ''
   try {
     if (wc.getURL().startsWith(GMAIL_URL) && !wc.isLoading() &&
@@ -72,8 +138,13 @@ async function refreshAccount() {
   } catch (_) { /* trang dang chuyen */ }
   if (account !== state.account) {
     state.account = account
-    if (account) log('ok', `Đã đăng nhập: ${account}`)
-    else push()
+    if (account) {
+      log('ok', `Đã đăng nhập: ${account}`)
+      // nho kieu trinh duyet vua dang nhap duoc cho cac lan mo sau
+      if (readSettings().loginMode !== loginMode) {
+        try { fs.writeFileSync(settingsFile(), JSON.stringify({ ...readSettings(), loginMode })) } catch (_) { /* bo qua */ }
+      }
+    } else push()
   }
 }
 
@@ -147,7 +218,10 @@ ipcMain.handle('call', (_e, cmd, payload) => {
   else if (cmd === 'update_open') shell.openExternal(release ? release.url : updater.RELEASES_PAGE)
   else if (!busy) {
     if (cmd === 'run') runClean(payload || {})
-    else if (cmd === 'gmail_home') gmail.webContents.loadURL(GMAIL_URL).catch(() => {})
+    else if (cmd === 'gmail_home') {
+      triedModes = new Set() // cho thu lai tu dau cac kieu trinh duyet
+      gmail.webContents.loadURL(GMAIL_URL).catch(() => {})
+    }
     else if (cmd === 'update_check') updateCheck()
     else if (cmd === 'update_install') updateInstall()
   }
