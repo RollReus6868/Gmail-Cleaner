@@ -1,8 +1,5 @@
-__pycache__/
-.venv/
-build/
+node_modules/
 dist/
 release/
-node_modules/
 tests/screenshots/
 *.log

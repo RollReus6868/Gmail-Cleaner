@@ -1,0 +1,48 @@
+{
+  "name": "gmail-cleaner",
+  "productName": "GmailCleaner",
+  "version": "2.0.0",
+  "description": "Tool tu dong don thu cu tren Gmail, trinh duyet nhung ngay trong tool",
+  "main": "src/main.js",
+  "author": "RollReus6868",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/RollReus6868/Gmail-Cleaner.git" },
+  "scripts": {
+    "start": "electron .",
+    "test": "node tests/updater-test.js",
+    "build:ui": "npm --prefix ui run build"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
+    "playwright-core": "^1.63.0"
+  },
+  "build": {
+    "appId": "com.rollreus.gmailcleaner",
+    "productName": "GmailCleaner",
+    "directories": { "output": "dist" },
+    "files": ["src/**/*", "ui_dist/**/*", "package.json"],
+    "afterPack": "tools/ky-mac.js",
+    "publish": null,
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
+    "nsis": {
+      "artifactName": "GmailCleaner-${version}-windows-setup.exe",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Gmail Cleaner",
+      "deleteAppDataOnUninstall": false,
+      "unicode": true
+    },
+    "mac": {
+      "target": ["zip"],
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "artifactName": "GmailCleaner-${version}-mac-${arch}.${ext}"
+    }
+  }
+}

@@ -1,7 +1,7 @@
-import { ArrowUpCircle, Bell, Download, Eraser, ExternalLink, Inbox, RefreshCw, LogIn, MailX, MessagesSquare, Palette, Play, ScrollText, Settings, ShieldAlert, Square, Tag, Trash2, Users, type LucideIcon } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { ArrowUpCircle, Bell, Download, Eraser, ExternalLink, Globe, Home, Inbox, RefreshCw, MailX, MessagesSquare, Palette, Play, ScrollText, Settings, ShieldAlert, Square, Tag, Trash2, Users, type LucideIcon } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { call, demoState, emptyState, type Level, type Options, type State } from './api'
-import { ActionBar, AppShell, Button, Card, Dialog, EmptyState, GradientProgress, LevelTag, PageBody, PageHeader, Pill, Sidebar, Switch, ThemeGrid, cn, load, save, type Tone } from './kit'
+import { ActionBar, AppShell, BrowserPane, Button, Card, Dialog, EmptyState, GradientProgress, LevelTag, PageBody, PageHeader, Pill, Sidebar, Switch, ThemeGrid, cn, load, save, type Tone } from './kit'
 
 const PAGE_SIZE = 100
 const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
@@ -23,7 +23,7 @@ const DEFAULTS: Options = { sections: ['social', 'promotions'], startPage: 1, em
 function useBackend() {
   const [state, setState] = useState<State>(() => (location.search.includes('demo') ? demoState : emptyState))
   useEffect(() => {
-    window.__gcPush = setState
+    window.gc?.onState(setState)
     call('hello').then((s) => s && setState(s))
   }, [])
   const send = (cmd: string, payload?: unknown) => call(cmd, payload).then((s) => s && setState({ ...s }))
@@ -56,8 +56,7 @@ function CleanPage({ state, send, goUpdate }: Backend & { goUpdate: () => void }
   }
 
   const status =
-    state.status === 'login' ? <Pill tone="active">Đang chờ đăng nhập…</Pill>
-    : state.status === 'run' ? <Pill tone="active">Đang xóa{state.section ? `: ${state.section}` : '…'}</Pill>
+    state.status === 'run' ? <Pill tone="active">Đang xóa{state.section ? `: ${state.section}` : '…'}</Pill>
     : state.account ? <Pill tone="success" className="max-w-[220px]">{state.account}</Pill>
     : <Pill tone="muted">Chưa đăng nhập</Pill>
 
@@ -84,12 +83,11 @@ function CleanPage({ state, send, goUpdate }: Backend & { goUpdate: () => void }
             <div className="min-w-0 flex-1 basis-48">
               <h2 className="text-sm font-bold">Bước 1 · Đăng nhập</h2>
               <p className="text-xs text-muted-foreground">
-                Mở Gmail trong cửa sổ trình duyệt của tool. Bạn tự nhập mật khẩu với Google, tool không lưu mật khẩu.
+                {state.account
+                  ? `Đang dùng ${state.account}.`
+                  : 'Đăng nhập Gmail ở khung trình duyệt bên phải. Bạn tự nhập mật khẩu với Google, tool không lưu mật khẩu.'}
               </p>
             </div>
-            <Button variant="outline" disabled={busy} onClick={() => send('login')}>
-              <LogIn /> {state.account ? 'Mở lại Gmail' : 'Đăng nhập Gmail'}
-            </Button>
           </div>
         </Card>
 
@@ -279,11 +277,29 @@ function SettingsPage() {
   )
 }
 
+function Browser({ state, send }: Backend) {
+  // ham on dinh de BrowserPane khong dang ky lai moi lan ve
+  const onRect = useCallback((r: unknown) => void call('pane', r), [])
+  return (
+    <>
+      <header className="flex h-11 shrink-0 items-center gap-2 px-3">
+        <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold">Gmail{state.account ? ` · ${state.account}` : ''}</span>
+        <Button variant="subtle" className="h-7 rounded-md px-2 text-xs" disabled={state.status !== 'idle'} onClick={() => send('gmail_home')} title="Về hộp thư Gmail">
+          <Home /> Về Gmail
+        </Button>
+      </header>
+      <BrowserPane onRect={onRect} />
+    </>
+  )
+}
+
 export default function App() {
   const backend = useBackend()
   const [page, setPage] = useState('clean')
   return (
     <AppShell
+      browser={<Browser {...backend} />}
       sidebar={
         <Sidebar
           brand="Gmail Cleaner"

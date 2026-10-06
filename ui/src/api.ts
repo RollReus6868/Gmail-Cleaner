@@ -1,4 +1,4 @@
-// Cau noi voi Python: app.py gan window.gcCall va goi window.__gcPush(state).
+// Cau noi voi tien trinh chinh cua Electron (src/preload.js gan window.gc).
 export type Level = 'info' | 'ok' | 'warn' | 'error'
 export type Update = {
   status: 'idle' | 'checking' | 'none' | 'available' | 'downloading' | 'installing' | 'error'
@@ -9,7 +9,7 @@ export type Update = {
   manual: boolean // khong tu cai duoc -> chi mo trang tai ve
 }
 export type State = {
-  status: 'idle' | 'login' | 'run' | 'update'
+  status: 'idle' | 'run' | 'update'
   version: string
   update: Update
   account: string
@@ -21,8 +21,7 @@ export type Options = { sections: string[]; startPage: number; emptyTrash: boole
 
 declare global {
   interface Window {
-    gcCall?: (cmd: string, payload?: unknown) => Promise<State>
-    __gcPush?: (s: State) => void
+    gc?: { call: (cmd: string, payload?: unknown) => Promise<State>; onState: (cb: (s: State) => void) => void }
   }
 }
 
@@ -45,5 +44,5 @@ export const demoState: State = {
 }
 
 export function call(cmd: string, payload?: unknown): Promise<State | null> {
-  return window.gcCall ? window.gcCall(cmd, payload) : Promise.resolve(null)
+  return window.gc ? window.gc.call(cmd, payload) : Promise.resolve(null)
 }

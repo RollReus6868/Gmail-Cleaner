@@ -1,6 +1,6 @@
 // Bo khung giao dien kieu Youwee, ban toi gian cho tool nay.
 import { ChevronLeft, ChevronRight, Moon, Sun, type LucideIcon } from 'lucide-react'
-import { createContext, useContext, useEffect, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { themes, themeVars, type Theme } from './themes'
 
 export const STORAGE_KEY = 'gmail-cleaner'
@@ -56,7 +56,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 export function ThemeGrid() {
   const { theme, setTheme, dark } = useTheme()
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <div className="grid grid-cols-2 gap-2">
       {themes.map((t) => {
         const g = (dark ? t.dark : t.light).gradient
         return (
@@ -164,12 +164,43 @@ export function IconTile({ icon: Icon }: { icon: LucideIcon }) {
 /* ---------- Khung cua so ---------- */
 export type NavItem = { id: string; label: string; icon: LucideIcon; dot?: boolean }
 
-export function AppShell({ sidebar, children }: { sidebar: ReactNode; children: ReactNode }) {
+// Thanh ben | cot dieu khien (rong co dinh) | khung trinh duyet Gmail.
+export function AppShell({ sidebar, children, browser }: { sidebar: ReactNode; children: ReactNode; browser: ReactNode }) {
   return (
     <div className="relative flex h-full gap-3 p-3">
       <div className="app-bg-glow" />
       {sidebar}
-      <main className="glass-panel relative flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
+      <main className="glass-panel relative flex w-[420px] shrink-0 flex-col overflow-hidden">{children}</main>
+      <section className="glass-panel relative flex min-w-0 flex-1 flex-col overflow-hidden">{browser}</section>
+    </div>
+  )
+}
+
+// Cho trong danh cho khung trinh duyet nhung. Electron ve trang Gmail DE LEN vung
+// nay, nen phai bao vi tri moi khi bo cuc doi.
+export function BrowserPane({ onRect }: { onRect: (r: { x: number; y: number; width: number; height: number }) => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const report = () => {
+      const r = el.getBoundingClientRect()
+      onRect({ x: r.x, y: r.y, width: r.width, height: r.height })
+    }
+    const ro = new ResizeObserver(report)
+    ro.observe(el)
+    ro.observe(document.body)
+    report()
+    // thanh ben mo/dong co hieu ung 200ms: bao lai sau khi xong
+    const t = setInterval(report, 500)
+    return () => {
+      ro.disconnect()
+      clearInterval(t)
+    }
+  }, [onRect])
+  return (
+    <div ref={ref} data-pane className="m-2 mt-0 flex min-h-0 flex-1 items-center justify-center rounded-xl bg-muted/40 text-sm text-muted-foreground">
+      Đang mở Gmail…
     </div>
   )
 }
@@ -199,7 +230,7 @@ export function Sidebar({ brand, items, bottomItems, activeId, onSelect }: {
   brand: string; items: NavItem[]; bottomItems: NavItem[]; activeId: string; onSelect: (id: string) => void
 }) {
   const { dark, toggleDark } = useTheme()
-  const [open, setOpen] = useState(() => load('sidebar', window.innerWidth >= 900))
+  const [open, setOpen] = useState(() => load('sidebar', window.innerWidth >= 1300))
   useEffect(() => {
     save('sidebar', open)
   }, [open])
@@ -221,7 +252,7 @@ export function Sidebar({ brand, items, bottomItems, activeId, onSelect }: {
 
 export function PageHeader({ icon, title, description, actions }: { icon: LucideIcon; title: string; description: string; actions?: ReactNode }) {
   return (
-    <header className="flex shrink-0 flex-wrap items-center gap-3 px-4 pb-3 pt-4 sm:px-6 sm:pt-5">
+    <header className="flex shrink-0 flex-wrap items-center gap-3 px-4 pb-3 pt-4">
       <IconTile icon={icon} />
       <div className="min-w-0 flex-1 basis-40">
         <h1 className="truncate text-lg font-extrabold">{title}</h1>
@@ -233,13 +264,13 @@ export function PageHeader({ icon, title, description, actions }: { icon: Lucide
 }
 
 export const PageBody = ({ children }: { children: ReactNode }) => (
-  <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4 sm:px-6">{children}</div>
+  <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4">{children}</div>
 )
 
 export const ActionBar = ({ children }: { children: ReactNode }) => (
   <footer className="shrink-0">
     <hr className="gradient-divider" />
-    <div className="flex items-center gap-3 px-4 py-3 sm:px-6 sm:py-4">{children}</div>
+    <div className="flex items-center gap-3 px-4 py-3">{children}</div>
   </footer>
 )
 
@@ -283,7 +314,7 @@ export function Dialog({ open, onClose, title, children, actions }: { open: bool
   }, [open, onClose])
   if (!open) return null
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" onClick={onClose}>
+    <div className="absolute inset-0 z-50 flex items-center justify-center rounded-2xl bg-black/50 p-4 backdrop-blur-sm" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl border border-border/50 bg-popover p-5 text-popover-foreground shadow-2xl">
         <h2 className="text-base font-extrabold">{title}</h2>
         <div className="mt-3 space-y-2 text-sm text-muted-foreground">{children}</div>

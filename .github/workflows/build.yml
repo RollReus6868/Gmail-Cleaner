@@ -1,10 +1,11 @@
 # Build + kiem thu tren may Windows / macOS that, va phat hanh GitHub Release.
 #
 #  push len main / pull request        -> kiem thu + build ca 3 he (khong phat hanh)
-#  Actions > Build & Release > Run workflow, tick "publish" -> tao them Release v<APP_VERSION>
-#  push tag v<APP_VERSION>              -> tao them Release
+#  Actions > Build & Release > Run workflow, tick "publish" -> tao them Release v<version>
+#  push tag v<version>                  -> tao them Release
 #
-# Ten file trong Release la co dinh; updater.py phu thuoc vao chung.
+# Ten file trong Release la co dinh; src/updater.js phu thuoc vao chung.
+# Moi lenh kiem thu boc trong tests/ci-run.js: loi thi ket qua hien ngay tren trang tong ket.
 name: Build & Release
 
 on:
@@ -16,7 +17,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Phat hanh GitHub Release v<APP_VERSION> sau khi build xanh"
+        description: "Phat hanh GitHub Release v<version> sau khi build xanh"
         type: boolean
         default: false
 
@@ -28,10 +29,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/') }}
 
 env:
-  PYTHON_VERSION: "3.12"
-  PYTHONUTF8: "1"
-  PYTHONIOENCODING: "utf-8"
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  NODE_VERSION: "22"
+  # Khong ky so: khong co chung chi (ban Mac duoc ky ad-hoc trong tools/ky-mac.js).
+  CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
 jobs:
   # ------------------------------------------------------------------ 1. Linux: kiem tra nhanh
@@ -44,43 +44,37 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-node@v7
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: requirements*.txt
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
       - name: Doc phien ban
         id: ver
         run: |
-          v=$(python -c "import app_info; print(app_info.APP_VERSION)")
+          v=$(node -p "require('./package.json').version")
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "APP_VERSION=$v"
+          echo "version=$v"
           if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF_NAME#v}" != "$v" ]]; then
-            echo "::error::Tag $GITHUB_REF_NAME khong khop APP_VERSION=$v trong app_info.py"
+            echo "::error::Tag $GITHUB_REF_NAME khong khop version=$v trong package.json"
             exit 1
           fi
+          test -s ui_dist/index.html || { echo "::error::thieu ui_dist (chay npm run build:ui)"; exit 1; }
+          grep -q "$v" RELEASE_NOTES.md || { echo "::error::RELEASE_NOTES.md chua nhac toi phien ban $v"; exit 1; }
 
-      - name: Cai thu vien Python
-        run: python -m pip install -r requirements.txt pyflakes
-
-      - name: Kiem tra tinh
-        run: |
-          python -m pyflakes *.py tests/*.py
-          test -s ui_dist/index.html || { echo "::error::thieu ui_dist (chay npm run build trong ui/)"; exit 1; }
-          grep -q "$(python -c 'import app_info; print(app_info.APP_VERSION)')" RELEASE_NOTES.md \
-            || { echo "::error::RELEASE_NOTES.md chua nhac toi phien ban hien tai"; exit 1; }
+      - name: Cai thu vien
+        run: npm ci --no-audit --no-fund
 
       - name: Kiem thu tu cap nhat
-        run: python tests/ci_run.py python -X dev -m unittest discover -s tests -p "test_updater.py" -v
+        run: node tests/ci-run.js node tests/updater-test.js
 
-      - name: Kiem thu loi xoa thu (Gmail gia lap)
-        run: python tests/ci_run.py python tests/test_cleaner.py
+      - name: Kiem thu loi xoa thu (Gmail gia lap, trong Electron)
+        run: xvfb-run -a -s "-screen 0 1500x950x24" node tests/ci-run.js npx electron --no-sandbox tests/cleaner-main.js
 
-      - name: Chay that app tu ma nguon (2 cua so, Gmail gia lap)
+      - name: Chay that app tu ma nguon (Gmail gia lap nhung trong cua so)
         run: |
-          xvfb-run -a -s "-screen 0 1400x900x24" python tests/ci_run.py python tests/e2e_app.py
-          xvfb-run -a -s "-screen 0 1400x900x24" python tests/ci_run.py python tests/e2e_update.py
+          xvfb-run -a -s "-screen 0 1500x950x24" node tests/ci-run.js node tests/e2e-app.js
+          xvfb-run -a -s "-screen 0 1500x950x24" node tests/ci-run.js node tests/e2e-update.js
 
   # ------------------------------------------------------------------ 2. Windows
   windows:
@@ -91,105 +85,66 @@ jobs:
     env:
       VERSION: ${{ needs.test.outputs.version }}
       INSTALL_DIR: ${{ github.workspace }}\install test\Gmail Cleaner
-      GC_UPDATE_NO_RELAUNCH: "1"
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-node@v7
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: requirements*.txt
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
       - name: Cai thu vien
-        run: python -m pip install -r requirements-build.txt
+        run: npm ci --no-audit --no-fund
 
       - name: Kiem thu tren Windows
         run: |
-          python tests/ci_run.py python -X dev -m unittest discover -s tests -p "test_updater.py" -v
-          python tests/ci_run.py python tests/test_cleaner.py
+          node tests/ci-run.js node tests/updater-test.js
+          node tests/ci-run.js npx electron tests/cleaner-main.js
 
-      - name: Dong goi (PyInstaller)
-        run: python tests/ci_run.py python -m PyInstaller --noconfirm --clean GmailCleaner.spec
+      - name: Dong goi (electron-builder, bo cai NSIS)
+        run: node tests/ci-run.js npx electron-builder --win --x64 --publish never
 
       - name: Chay that app da dong goi
-        run: GC_APP=dist/GmailCleaner/GmailCleaner.exe python tests/ci_run.py python tests/e2e_app.py
-
-      - name: Cai Inno Setup
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          function Find-Iscc {
-            @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe", "C:\InnoSetup\ISCC.exe") |
-              Where-Object { Test-Path $_ } | Select-Object -First 1
-          }
-          $iscc = Find-Iscc
-          if (-not $iscc) {
-            Write-Host "Inno Setup chua co san - tai 6.6.1 tu GitHub"
-            $exe = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
-            try {
-              Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_6_1/innosetup-6.6.1.exe' -OutFile $exe
-              $p = Start-Process $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/ALLUSERS','/DIR=C:\InnoSetup' -Wait -PassThru
-              Write-Host "ma thoat cua bo cai: $($p.ExitCode)"
-            } catch { Write-Host "Tai tu GitHub loi: $_" }
-            $iscc = Find-Iscc
-          }
-          if (-not $iscc) {
-            Write-Host "Chuyen sang Chocolatey"
-            choco install innosetup -y --no-progress
-            $iscc = Find-Iscc
-          }
-          if (-not $iscc) { throw "Khong tim thay ISCC.exe sau moi cach cai" }
-          Write-Host "ISCC = $iscc"
-          "ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-      - name: Tao bo cai dat
-        shell: pwsh
-        run: |
-          $out = & $env:ISCC "/DAppVersion=$env:VERSION" "installer\GmailCleaner.iss" 2>&1
-          $code = $LASTEXITCODE
-          $out | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }
-          if ($code -ne 0) {
-            Write-Host "::error title=ISCC loi::$(($out | Select-Object -Last 20) -join '%0A')"
-            throw "ISCC loi, ma thoat $code"
-          }
-          Get-ChildItem dist\*.exe
+        run: GC_APP=dist/win-unpacked/GmailCleaner.exe node tests/ci-run.js node tests/e2e-app.js
 
       - name: Cai dat im lang vao thu muc co dau cach
         shell: pwsh
         run: |
           $setup = "dist\GmailCleaner-$env:VERSION-windows-setup.exe"
-          $log = Join-Path $env:RUNNER_TEMP 'setup_log.txt'
-          $p = Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$env:INSTALL_DIR`"","/LOG=`"$log`"" -Wait -PassThru
-          if ($p.ExitCode -ne 0) {
-            Get-Content $log -Tail 40
-            Write-Host "::error title=Bo cai loi::$((Get-Content $log -Tail 25) -join '%0A')"
-            throw "bo cai thoat voi ma $($p.ExitCode)"
+          if (-not (Test-Path $setup)) { Get-ChildItem dist; throw "khong thay $setup" }
+          # NSIS: /D= phai dung cuoi va KHONG co dau nhay, ke ca khi duong dan co dau cach
+          $p = Start-Process $setup -ArgumentList '/S', "/D=$env:INSTALL_DIR" -Wait -PassThru
+          for ($i = 0; $i -lt 120 -and -not (Test-Path "$env:INSTALL_DIR\Uninstall GmailCleaner.exe"); $i++) { Start-Sleep 1 }
+          if (-not (Test-Path "$env:INSTALL_DIR\GmailCleaner.exe")) {
+            Write-Host "::error title=Bo cai loi::ma thoat $($p.ExitCode), khong thay GmailCleaner.exe trong $env:INSTALL_DIR"
+            throw "app chua duoc cai"
           }
-          if (-not (Test-Path "$env:INSTALL_DIR\GmailCleaner.exe")) { throw "app chua duoc cai" }
-          if (-not (Test-Path "$env:INSTALL_DIR\unins000.exe")) { throw "thieu trinh go cai dat" }
+          if (-not (Test-Path "$env:INSTALL_DIR\Uninstall GmailCleaner.exe")) { throw "thieu trinh go cai dat" }
 
       - name: Chay that app da cai
-        run: GC_APP="$INSTALL_DIR\\GmailCleaner.exe" python tests/ci_run.py python tests/e2e_app.py
+        run: GC_APP="$INSTALL_DIR\\GmailCleaner.exe" node tests/ci-run.js node tests/e2e-app.js
 
       - name: Tu cap nhat that (app tai bo cai, tu thoat, bo cai ghi de)
         run: |
           GC_APP="$INSTALL_DIR\\GmailCleaner.exe" \
           GC_UPDATE_FILE="dist/GmailCleaner-$VERSION-windows-setup.exe" \
-          python tests/ci_run.py python tests/e2e_update.py
+          node tests/ci-run.js node tests/e2e-update.js
 
       - name: App van chay sau khi tu cap nhat
-        run: GC_APP="$INSTALL_DIR\\GmailCleaner.exe" python tests/ci_run.py python tests/e2e_app.py
+        run: GC_APP="$INSTALL_DIR\\GmailCleaner.exe" node tests/ci-run.js node tests/e2e-app.js
 
       - name: Go cai dat
         shell: pwsh
         run: |
-          $u = Start-Process "$env:INSTALL_DIR\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
-          for ($i = 0; $i -lt 60 -and (Test-Path "$env:INSTALL_DIR\GmailCleaner.exe"); $i++) { Start-Sleep 1 }
-          if (Test-Path "$env:INSTALL_DIR\GmailCleaner.exe") { throw "go cai dat khong xoa duoc app" }
+          Start-Process "$env:INSTALL_DIR\Uninstall GmailCleaner.exe" -ArgumentList '/S' -Wait
+          for ($i = 0; $i -lt 90 -and (Test-Path "$env:INSTALL_DIR\GmailCleaner.exe"); $i++) { Start-Sleep 1 }
+          if (Test-Path "$env:INSTALL_DIR\GmailCleaner.exe") {
+            Write-Host "::error title=Go cai dat loi::GmailCleaner.exe van con sau 90 giay"
+            throw "go cai dat khong xoa duoc app"
+          }
           Write-Host "cai / chay / cap nhat / go: OK"
 
       - name: Gom file phat hanh
@@ -203,16 +158,6 @@ jobs:
           name: windows
           path: release/*
           if-no-files-found: error
-
-      - name: Luu log de chan doan
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-logs
-          path: |
-            build/**/warn-*.txt
-            ${{ runner.temp }}/*.txt
-          if-no-files-found: ignore
 
   # ------------------------------------------------------------------ 3. macOS (Apple Silicon + Intel)
   macos:
@@ -232,83 +177,61 @@ jobs:
     timeout-minutes: 45
     env:
       VERSION: ${{ needs.test.outputs.version }}
-      GC_UPDATE_NO_RELAUNCH: "1"
+      ZIP: release/GmailCleaner-${{ needs.test.outputs.version }}-mac-${{ matrix.arch }}.zip
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-node@v7
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: requirements*.txt
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
 
       - name: Cai thu vien
-        run: python -m pip install -r requirements-build.txt
+        run: npm ci --no-audit --no-fund
 
       - name: Kiem thu tren macOS
         run: |
-          python tests/ci_run.py python -X dev -m unittest discover -s tests -p "test_updater.py" -v
-          python tests/ci_run.py python tests/test_cleaner.py
+          node tests/ci-run.js node tests/updater-test.js
+          node tests/ci-run.js npx electron tests/cleaner-main.js
 
-      - name: Dong goi .app
-        run: python tests/ci_run.py python -m PyInstaller --noconfirm --clean GmailCleaner.spec
+      - name: Dong goi .app + zip (ky ad-hoc trong tools/ky-mac.js)
+        run: node tests/ci-run.js npx electron-builder --mac --${{ matrix.arch }} --publish never
 
-      - name: Kiem tra kien truc
+      - name: Kiem tra kien truc va chu ky
         run: |
-          exe="dist/GmailCleaner.app/Contents/MacOS/GmailCleaner"
-          file "$exe"
-          file "$exe" | grep -q "${{ matrix.file_arch }}" || { echo "::error::sai kien truc"; exit 1; }
-
-      - name: Ky ad-hoc va xac minh chu ky
-        run: |
-          APP="dist/GmailCleaner.app"
-          # PyInstaller da ky ad-hoc tung file nhi phan; niem phong lai ca goi.
-          codesign --force --sign - --timestamp=none "$APP"
-          if ! codesign --verify --deep --strict --verbose=2 "$APP"; then
-            echo "::warning::niem phong lop ngoai chua du, ky lai voi --deep"
-            codesign --force --deep --sign - --timestamp=none "$APP"
-            codesign --verify --deep --strict --verbose=2 "$APP"
-          fi
+          APP=$(ls -d dist/mac*/GmailCleaner.app)
+          echo "APP=$APP" >> "$GITHUB_ENV"
+          file "$APP/Contents/MacOS/GmailCleaner"
+          file "$APP/Contents/MacOS/GmailCleaner" | grep -q "${{ matrix.file_arch }}" || { echo "::error::sai kien truc"; exit 1; }
+          codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -dv "$APP" 2>&1 | grep -E "Signature|Identifier|Format" || true
+          mkdir -p release
+          cp "dist/GmailCleaner-$VERSION-mac-${{ matrix.arch }}.zip" "$ZIP"
+          ls -la release
 
       - name: Chay that app da dong goi
-        run: GC_APP=dist/GmailCleaner.app/Contents/MacOS/GmailCleaner python tests/ci_run.py python tests/e2e_app.py
-
-      - name: Nen zip (ditto giu symlink + chu ky)
-        run: |
-          mkdir -p release
-          ditto -c -k --sequesterRsrc --keepParent dist/GmailCleaner.app "release/GmailCleaner-$VERSION-mac-${{ matrix.arch }}.zip"
-          ls -la release
+        run: GC_APP="$APP/Contents/MacOS/GmailCleaner" node tests/ci-run.js node tests/e2e-app.js
 
       - name: Giai nen nhu nguoi dung + chay lai
         run: |
           UNZ="$RUNNER_TEMP/thu muc cai"
           rm -rf "$UNZ" && mkdir -p "$UNZ"
-          ditto -x -k "release/GmailCleaner-$VERSION-mac-${{ matrix.arch }}.zip" "$UNZ"
+          ditto -x -k "$ZIP" "$UNZ"
           codesign --verify --deep --strict --verbose=2 "$UNZ/GmailCleaner.app"
-          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" python tests/ci_run.py python tests/e2e_app.py
+          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" node tests/ci-run.js node tests/e2e-app.js
 
       - name: Tu cap nhat that (app tai zip, tu thoat, thay .app)
         run: |
           UNZ="$RUNNER_TEMP/thu muc cai"
-          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" \
-          GC_UPDATE_FILE="release/GmailCleaner-$VERSION-mac-${{ matrix.arch }}.zip" \
-          python tests/ci_run.py python tests/e2e_update.py
-          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" python tests/ci_run.py python tests/e2e_app.py
+          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" GC_UPDATE_FILE="$ZIP" \
+          node tests/ci-run.js node tests/e2e-update.js
+          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" node tests/ci-run.js node tests/e2e-app.js
 
       - uses: actions/upload-artifact@v7
         with:
           name: mac-${{ matrix.arch }}
           path: release/*
           if-no-files-found: error
-
-      - name: Luu log de chan doan
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: mac-${{ matrix.arch }}-logs
-          path: build/**/warn-*.txt
-          if-no-files-found: ignore
 
   # ------------------------------------------------------------------ 4. Phat hanh
   release:
@@ -344,7 +267,7 @@ jobs:
       - name: Tao Release v${{ env.VERSION }}
         run: |
           if gh release view "v$VERSION" >/dev/null 2>&1; then
-            echo "::error::Release v$VERSION da ton tai. Hay tang APP_VERSION trong app_info.py roi chay lai."
+            echo "::error::Release v$VERSION da ton tai. Hay tang version trong package.json roi chay lai."
             exit 1
           fi
           gh release create "v$VERSION" release/* \
