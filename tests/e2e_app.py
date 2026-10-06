@@ -42,6 +42,9 @@ try:
                 time.sleep(0.5)
         ctx = browser.contexts[0]
         ui = find(ctx, "gmailcleaner")
+        console = []
+        ui.on("console", lambda m: console.append(f"{m.type}: {m.text}"))
+        ui.on("pageerror", lambda e: console.append(f"pageerror: {e}"))
         ui.get_by_role("button", name="Đăng nhập Gmail").wait_for()
         assert ui.evaluate("typeof window.gcCall") == "function"
 
@@ -89,10 +92,12 @@ try:
             for entry in st["logs"]:
                 print("   ", entry["t"], entry["level"], entry["msg"])
             print("---- CAC CUA SO:", [pg.url for pg in ctx.pages])
+            print("---- CONSOLE:", console[-15:])
             print("---- GIAO DIEN:", ui.evaluate("""() => new Promise(done => {
                 const info = {visibility: document.visibilityState, focus: document.hasFocus(),
                               size: [innerWidth, innerHeight], raf: false,
-                              text: document.body.innerText.slice(0, 1500)};
+                              html: document.documentElement.outerHTML.slice(0, 1200),
+                              text: document.body.innerText.slice(0, 600)};
                 requestAnimationFrame(() => { info.raf = true; });
                 setTimeout(() => done(info), 1500);
             })"""))
