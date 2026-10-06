@@ -1,0 +1,60 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Hộp thư đến - test@gmail.com - Gmail</title>
+<!-- Gmail gia lap: chi mo phong dung nhung phan tu ma cleaner.py dung toi. -->
+<div style="display:none"><div gh="tm"><span role="checkbox" aria-checked="false"></span><div act="10" role="button">cu</div></div></div>
+<div id="app"></div>
+<script>
+const KEY = 'mock';
+const load = () => JSON.parse(sessionStorage.getItem(KEY) || 'null');
+const save = s => sessionStorage.setItem(KEY, JSON.stringify(s));
+// seed(counts, size, overflow): overflow = 'prev' (nhay ve trang truoc) | 'stay'
+window.seed = (counts, size = 50, overflow = 'prev') => {
+  const labels = { trash: [] };
+  for (const [k, n] of Object.entries(counts)) labels[k] = Array.from({ length: n }, (_, i) => k + '-' + (i + 1));
+  save({ size, overflow, labels });
+};
+window.dump = () => { const s = load(); return { size: s.size, labels: s.labels }; };
+let checked = false;
+
+function render() {
+  const s = load(), app = document.getElementById('app');
+  if (!s) { app.innerHTML = ''; return; }
+  const hash = location.hash.slice(1) || 'inbox';
+  if (hash.startsWith('settings')) {
+    app.innerHTML = '<div role="main"><select id="ps">' + [10, 15, 20, 25, 50, 100].map(n =>
+      `<option${n === s.size ? ' selected' : ''}>${n}</option>`).join('') +
+      '</select><select><option>a</option></select><button guidedhelpid="save_changes_button">Lưu thay đổi</button></div>';
+    app.querySelector('button').onclick = () => {
+      s.size = +document.getElementById('ps').value; save(s);
+      setTimeout(() => { location.hash = '#inbox'; location.reload(); }, 200);
+    };
+    return;
+  }
+  const m = hash.match(/^(.*?)(?:\/p(\d+))?$/), label = m[1], page = +(m[2] || 1);
+  const all = s.labels[label] || [], from = (page - 1) * s.size, rows = all.slice(from, from + s.size);
+  if (page > 1 && rows.length === 0 && s.overflow === 'prev') {
+    const last = Math.max(1, Math.ceil(all.length / s.size));
+    location.hash = '#' + label + (last > 1 ? '/p' + last : ''); return;
+  }
+  const forever = label === 'trash' || label === 'spam';
+  checked = false;
+  app.innerHTML = `<div gh="tm"><span role="checkbox" aria-checked="false">[ ]</span>` +
+    (forever ? '<div role="button">Xóa vĩnh viễn</div>' : '<div act="10" role="button" aria-label="Xóa">X</div>') +
+    (rows.length ? `<span class="Dj"><span class="ts">${(from + 1).toLocaleString('vi')}</span>–<span class="ts">${from + rows.length}</span> trong số <span class="ts">${all.length.toLocaleString('vi')}</span></span>` : '') +
+    `</div><div role="main"><table>${rows.map(r => `<tr class="zA"><td>${r}</td></tr>`).join('')}</table></div>`;
+  const box = app.querySelector('[role=checkbox]');
+  box.onclick = () => { checked = !checked; box.setAttribute('aria-checked', checked); };
+  app.querySelector('[gh=tm] [role=button]').onclick = () => {
+    if (!checked) return;
+    setTimeout(() => {   // Gmail xoa khong tuc thi
+      const s2 = load();
+      const gone = s2.labels[label].splice(from, s2.size);
+      if (!forever) s2.labels.trash.push(...gone);
+      save(s2); render();
+    }, 400);
+  };
+}
+addEventListener('hashchange', render);
+setTimeout(render, 300);   // Gmail tai cham mot chut sau khi reload
+</script>

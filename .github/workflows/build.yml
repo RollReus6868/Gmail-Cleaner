@@ -1,0 +1,346 @@
+# Build + kiem thu tren may Windows / macOS that, va phat hanh GitHub Release.
+#
+#  push len main / pull request        -> kiem thu + build ca 3 he (khong phat hanh)
+#  Actions > Build & Release > Run workflow, tick "publish" -> tao them Release v<APP_VERSION>
+#  push tag v<APP_VERSION>              -> tao them Release
+#
+# Ten file trong Release la co dinh; updater.py phu thuoc vao chung.
+name: Build & Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore: ["**.md"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Phat hanh GitHub Release v<APP_VERSION> sau khi build xanh"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' && !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  PYTHON_VERSION: "3.12"
+  PYTHONUTF8: "1"
+  PYTHONIOENCODING: "utf-8"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  # ------------------------------------------------------------------ 1. Linux: kiem tra nhanh
+  test:
+    name: Kiem tra (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Doc phien ban
+        id: ver
+        run: |
+          v=$(python -c "import app_info; print(app_info.APP_VERSION)")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "APP_VERSION=$v"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF_NAME#v}" != "$v" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME khong khop APP_VERSION=$v trong app_info.py"
+            exit 1
+          fi
+
+      - name: Cai thu vien Python
+        run: python -m pip install -r requirements.txt pyflakes
+
+      - name: Kiem tra tinh
+        run: |
+          python -m pyflakes *.py tests/*.py
+          test -s ui_dist/index.html || { echo "::error::thieu ui_dist (chay npm run build trong ui/)"; exit 1; }
+          grep -q "$(python -c 'import app_info; print(app_info.APP_VERSION)')" RELEASE_NOTES.md \
+            || { echo "::error::RELEASE_NOTES.md chua nhac toi phien ban hien tai"; exit 1; }
+
+      - name: Kiem thu tu cap nhat
+        run: python -X dev -m unittest discover -s tests -p "test_updater.py" -v
+
+      - name: Kiem thu loi xoa thu (Gmail gia lap)
+        run: python tests/test_cleaner.py
+
+      - name: Chay that app tu ma nguon (2 cua so, Gmail gia lap)
+        run: |
+          xvfb-run -a -s "-screen 0 1400x900x24" python tests/e2e_app.py
+          xvfb-run -a -s "-screen 0 1400x900x24" python tests/e2e_update.py
+
+  # ------------------------------------------------------------------ 2. Windows
+  windows:
+    name: Windows (bo cai)
+    needs: test
+    runs-on: windows-2025
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.test.outputs.version }}
+      INSTALL_DIR: ${{ github.workspace }}\install test\Gmail Cleaner
+      GC_UPDATE_NO_RELAUNCH: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Cai thu vien
+        run: python -m pip install -r requirements-build.txt
+
+      - name: Kiem thu tren Windows
+        run: |
+          python -X dev -m unittest discover -s tests -p "test_updater.py" -v
+          python tests/test_cleaner.py
+
+      - name: Dong goi (PyInstaller)
+        run: python -m PyInstaller --noconfirm --clean GmailCleaner.spec
+
+      - name: Chay that app da dong goi
+        run: GC_APP=dist/GmailCleaner/GmailCleaner.exe python tests/e2e_app.py
+
+      - name: Cai Inno Setup
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Find-Iscc {
+            @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe", "C:\InnoSetup\ISCC.exe") |
+              Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          $iscc = Find-Iscc
+          if (-not $iscc) {
+            Write-Host "Inno Setup chua co san - tai 6.6.1 tu GitHub"
+            $exe = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+            try {
+              Invoke-WebRequest 'https://github.com/jrsoftware/issrc/releases/download/is-6_6_1/innosetup-6.6.1.exe' -OutFile $exe
+              $p = Start-Process $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/ALLUSERS','/DIR=C:\InnoSetup' -Wait -PassThru
+              Write-Host "ma thoat cua bo cai: $($p.ExitCode)"
+            } catch { Write-Host "Tai tu GitHub loi: $_" }
+            $iscc = Find-Iscc
+          }
+          if (-not $iscc) {
+            Write-Host "Chuyen sang Chocolatey"
+            choco install innosetup -y --no-progress
+            $iscc = Find-Iscc
+          }
+          if (-not $iscc) { throw "Khong tim thay ISCC.exe sau moi cach cai" }
+          Write-Host "ISCC = $iscc"
+          "ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Tao bo cai dat
+        shell: pwsh
+        run: |
+          & $env:ISCC "/DAppVersion=$env:VERSION" "installer\GmailCleaner.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC loi, ma thoat $LASTEXITCODE" }
+          Get-ChildItem dist\*.exe
+
+      - name: Cai dat im lang vao thu muc co dau cach
+        shell: pwsh
+        run: |
+          $setup = "dist\GmailCleaner-$env:VERSION-windows-setup.exe"
+          $log = Join-Path $env:RUNNER_TEMP 'setup_log.txt'
+          $p = Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$env:INSTALL_DIR`"","/LOG=`"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content $log -Tail 40; throw "bo cai thoat voi ma $($p.ExitCode)" }
+          if (-not (Test-Path "$env:INSTALL_DIR\GmailCleaner.exe")) { throw "app chua duoc cai" }
+          if (-not (Test-Path "$env:INSTALL_DIR\unins000.exe")) { throw "thieu trinh go cai dat" }
+
+      - name: Chay that app da cai
+        run: GC_APP="$INSTALL_DIR\\GmailCleaner.exe" python tests/e2e_app.py
+
+      - name: Tu cap nhat that (app tai bo cai, tu thoat, bo cai ghi de)
+        run: |
+          GC_APP="$INSTALL_DIR\\GmailCleaner.exe" \
+          GC_UPDATE_FILE="dist/GmailCleaner-$VERSION-windows-setup.exe" \
+          python tests/e2e_update.py
+
+      - name: App van chay sau khi tu cap nhat
+        run: GC_APP="$INSTALL_DIR\\GmailCleaner.exe" python tests/e2e_app.py
+
+      - name: Go cai dat
+        shell: pwsh
+        run: |
+          $u = Start-Process "$env:INSTALL_DIR\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          for ($i = 0; $i -lt 60 -and (Test-Path "$env:INSTALL_DIR\GmailCleaner.exe"); $i++) { Start-Sleep 1 }
+          if (Test-Path "$env:INSTALL_DIR\GmailCleaner.exe") { throw "go cai dat khong xoa duoc app" }
+          Write-Host "cai / chay / cap nhat / go: OK"
+
+      - name: Gom file phat hanh
+        run: |
+          mkdir -p release
+          cp "dist/GmailCleaner-$VERSION-windows-setup.exe" release/
+          ls -la release
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: release/*
+          if-no-files-found: error
+
+      - name: Luu log de chan doan
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-logs
+          path: |
+            build/**/warn-*.txt
+            ${{ runner.temp }}/*.txt
+          if-no-files-found: ignore
+
+  # ------------------------------------------------------------------ 3. macOS (Apple Silicon + Intel)
+  macos:
+    name: macOS ${{ matrix.arch }}
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+            file_arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+            file_arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ needs.test.outputs.version }}
+      GC_UPDATE_NO_RELAUNCH: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Cai thu vien
+        run: python -m pip install -r requirements-build.txt
+
+      - name: Kiem thu tren macOS
+        run: |
+          python -X dev -m unittest discover -s tests -p "test_updater.py" -v
+          python tests/test_cleaner.py
+
+      - name: Dong goi .app
+        run: python -m PyInstaller --noconfirm --clean GmailCleaner.spec
+
+      - name: Kiem tra kien truc
+        run: |
+          exe="dist/GmailCleaner.app/Contents/MacOS/GmailCleaner"
+          file "$exe"
+          file "$exe" | grep -q "${{ matrix.file_arch }}" || { echo "::error::sai kien truc"; exit 1; }
+
+      - name: Ky ad-hoc va xac minh chu ky
+        run: |
+          APP="dist/GmailCleaner.app"
+          # PyInstaller da ky ad-hoc tung file nhi phan; niem phong lai ca goi.
+          codesign --force --sign - --timestamp=none "$APP"
+          if ! codesign --verify --deep --strict --verbose=2 "$APP"; then
+            echo "::warning::niem phong lop ngoai chua du, ky lai voi --deep"
+            codesign --force --deep --sign - --timestamp=none "$APP"
+            codesign --verify --deep --strict --verbose=2 "$APP"
+          fi
+          codesign -dv "$APP" 2>&1 | grep -E "Signature|Identifier|Format" || true
+
+      - name: Chay that app da dong goi
+        run: GC_APP=dist/GmailCleaner.app/Contents/MacOS/GmailCleaner python tests/e2e_app.py
+
+      - name: Nen zip (ditto giu symlink + chu ky)
+        run: |
+          mkdir -p release
+          ditto -c -k --sequesterRsrc --keepParent dist/GmailCleaner.app "release/GmailCleaner-$VERSION-mac-${{ matrix.arch }}.zip"
+          ls -la release
+
+      - name: Giai nen nhu nguoi dung + chay lai
+        run: |
+          UNZ="$RUNNER_TEMP/thu muc cai"
+          rm -rf "$UNZ" && mkdir -p "$UNZ"
+          ditto -x -k "release/GmailCleaner-$VERSION-mac-${{ matrix.arch }}.zip" "$UNZ"
+          codesign --verify --deep --strict --verbose=2 "$UNZ/GmailCleaner.app"
+          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" python tests/e2e_app.py
+
+      - name: Tu cap nhat that (app tai zip, tu thoat, thay .app)
+        run: |
+          UNZ="$RUNNER_TEMP/thu muc cai"
+          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" \
+          GC_UPDATE_FILE="release/GmailCleaner-$VERSION-mac-${{ matrix.arch }}.zip" \
+          python tests/e2e_update.py
+          GC_APP="$UNZ/GmailCleaner.app/Contents/MacOS/GmailCleaner" python tests/e2e_app.py
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mac-${{ matrix.arch }}
+          path: release/*
+          if-no-files-found: error
+
+      - name: Luu log de chan doan
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mac-${{ matrix.arch }}-logs
+          path: build/**/warn-*.txt
+          if-no-files-found: ignore
+
+  # ------------------------------------------------------------------ 4. Phat hanh
+  release:
+    name: Phat hanh GitHub Release
+    needs: [test, windows, macos]
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.test.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Kiem tra du file + SHA256SUMS
+        run: |
+          cd release
+          ls -la
+          for f in "GmailCleaner-$VERSION-windows-setup.exe" \
+                   "GmailCleaner-$VERSION-mac-arm64.zip" "GmailCleaner-$VERSION-mac-x64.zip"; do
+            test -s "$f" || { echo "::error::thieu file $f"; exit 1; }
+          done
+          sha256sum GmailCleaner-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Tao Release v${{ env.VERSION }}
+        run: |
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "::error::Release v$VERSION da ton tai. Hay tang APP_VERSION trong app_info.py roi chay lai."
+            exit 1
+          fi
+          gh release create "v$VERSION" release/* \
+            --title "Gmail Cleaner $VERSION" \
+            --notes-file RELEASE_NOTES.md \
+            --target "$GITHUB_SHA" \
+            --latest
+          gh release view "v$VERSION" --json assets --jq '.assets[].name'

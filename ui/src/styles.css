@@ -1,0 +1,77 @@
+@import '@fontsource-variable/nunito';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Token Youwee: mau trung tinh zinc + mot mau nhan theo chu de (ThemeProvider ghi de). */
+:root {
+  --background: 0 0% 100%; --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%; --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%; --popover-foreground: 240 10% 3.9%;
+  --secondary: 240 4.8% 95.9%; --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%; --muted-foreground: 240 3.8% 46.1%;
+  --border: 240 5.9% 90%; --input: 240 5.9% 90%;
+  --destructive: 0 84.2% 60.2%; --destructive-foreground: 0 0% 98%;
+  --primary: 168 75% 36%; --primary-foreground: 0 0% 100%;
+  --accent: 168 60% 95%; --accent-foreground: 168 60% 27%;
+  --ring: 168 75% 36%;
+  --gradient-from: 150 75% 40%; --gradient-via: 168 75% 40%; --gradient-to: 190 75% 44%;
+  --radius: 0.625rem;
+  --font-sans: 'Nunito Variable', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+.dark {
+  --background: 240 10% 3.9%; --foreground: 0 0% 98%;
+  --card: 240 10% 5.9%; --card-foreground: 0 0% 98%;
+  --popover: 240 10% 5.9%; --popover-foreground: 0 0% 98%;
+  --secondary: 240 3.7% 15.9%; --secondary-foreground: 0 0% 98%;
+  --muted: 240 3.7% 15.9%; --muted-foreground: 240 5% 64.9%;
+  --border: 240 3.7% 15.9%; --input: 240 3.7% 15.9%;
+  --destructive: 0 62.8% 30.6%;
+  --primary: 168 80% 46%; --primary-foreground: 168 100% 8%;
+  --accent: 168 50% 16%; --accent-foreground: 168 80% 83%;
+  --ring: 168 80% 46%;
+  --gradient-from: 150 80% 28%; --gradient-via: 168 80% 30%; --gradient-to: 190 80% 32%;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0; overflow: hidden;
+  background: hsl(var(--background)); color: hsl(var(--foreground));
+  font-family: var(--font-sans);
+}
+* { border-color: hsl(var(--border)); }
+
+.gradient-text {
+  background: linear-gradient(135deg, hsl(var(--gradient-from)), hsl(var(--gradient-via)), hsl(var(--gradient-to)));
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.btn-gradient {
+  background: linear-gradient(135deg, hsl(var(--gradient-from)), hsl(var(--gradient-via)), hsl(var(--gradient-to)));
+  color: #fff; transition: all 0.3s;
+}
+.btn-gradient:hover {
+  box-shadow: 0 4px 20px hsl(var(--gradient-from) / 0.3), 0 2px 10px hsl(var(--gradient-to) / 0.2);
+}
+.glass-panel {
+  background: hsl(var(--card) / 0.3); backdrop-filter: blur(24px);
+  border: 1px solid rgb(0 0 0 / 0.06); border-radius: calc(var(--radius) + 6px);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.06);
+}
+.dark .glass-panel { border-color: rgb(255 255 255 / 0.05); box-shadow: 0 8px 40px rgba(0, 0, 0, 0.25); }
+.app-bg-glow {
+  position: fixed; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 100% 80% at 10% -30%, hsl(var(--gradient-from) / 0.15), transparent 50%),
+    radial-gradient(ellipse 80% 60% at 90% 10%, hsl(var(--gradient-via) / 0.12), transparent 50%),
+    radial-gradient(ellipse 60% 40% at 50% 110%, hsl(var(--gradient-to) / 0.1), transparent 50%);
+}
+.gradient-divider {
+  height: 1px; border: 0;
+  background: linear-gradient(90deg, transparent, hsl(var(--border)), transparent);
+}
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground) / 0.25); border-radius: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
